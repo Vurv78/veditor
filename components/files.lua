@@ -1,12 +1,13 @@
 ---@type Component
 local Component = include("../component.lua")
 
+---@class FileBrowser
 local FileBrowser = Component.new("FileBrowser")
 
----@param editor Editor
----@param panel GPanel
-function FileBrowser:Init(editor, panel)
-	panel:SetSize( editor:ScaleWidth(0.2), editor:ScaleHeight(1) )
+---@param ide IDE
+---@param panel Panel
+function FileBrowser:Init(ide, panel)
+	panel:SetSize( ide:ScaleWidth(0.2), ide:ScaleHeight(1) )
 	panel:Dock(LEFT)
 
 	--[[local scroll = vgui.Create("DVScrollBar", panel)
@@ -15,11 +16,11 @@ function FileBrowser:Init(editor, panel)
 	local files = vgui.Create("DTree", panel)
 	files:Dock(FILL)
 
-	---@param node GPanel
+	---@param node Panel
 	function files:DoClick(node)
 	end
 
-	---@param node GPanel
+	---@param node Panel
 	function files:DoRightClick(node)
 
 	end
@@ -36,10 +37,15 @@ end
 
 local color = Color(0, 0, 255, 255)
 function FileBrowser:Paint(width, height)
-	surface.SetDrawColor(255, 200, 255, 255)
+	-- Background
+	surface.SetDrawColor(30, 30, 30, 255)
 	surface.DrawRect(0, 0, width, height)
 
-	draw.SimpleText("File Browser", "DermaLarge", width / 2, height / 2, color, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+	-- Outline
+	surface.SetDrawColor(60, 60, 60, 255)
+	surface.DrawOutlinedRect(0, 0, width, height, 1)
+
+	-- draw.SimpleText("File Browser", "DermaLarge", width / 2, height / 2, color, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
 end
 
 function FileBrowser:Update()
