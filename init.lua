@@ -56,35 +56,17 @@ function IDE:RegisterComponent(component)
 end
 
 ---@param ratio number
----@return number
 function IDE:ScaleHeight(ratio)
-	local _, h = self.frame:GetSize()
-	return h * ratio
+	return self.frame:GetTall() * ratio
 end
 
 ---@param ratio number
----@return number
 function IDE:ScaleWidth(ratio)
-	local w = self.frame:GetSize()
-	return w * ratio
+	return self.frame:GetWide() * ratio
 end
 
 function IDE:GetSize()
 	return self.frame:GetSize()
-end
-
-do
-	local select = select
-
-	---@return number
-	function IDE:GetHeight()
-		return select(2, self.frame:GetSize())
-	end
-
-	---@return number
-	function IDE:GetWidth()
-		return select(1, self.frame:GetSize())
-	end
 end
 
 function IDE:Popup()
