@@ -29,7 +29,6 @@ local Component = include("../component.lua")
 ---@field code DPanel
 local Editor = Component.new("Editor")
 
-
 local lookup = {
 	[KEY_0] = "0", [KEY_1] = "1", [KEY_2] = "2", [KEY_3] = "3", [KEY_4] = "4", [KEY_5] = "5", [KEY_6] = "6", [KEY_7] = "7", [KEY_8] = "8", [KEY_9] = "9",
 	[KEY_A] = "a", [KEY_B] = "b", [KEY_C] = "c", [KEY_D] = "d", [KEY_E] = "e", [KEY_F] = "f", [KEY_G] = "g", [KEY_H] = "h", [KEY_I] = "i", [KEY_J] = "j", [KEY_L] = "l", [KEY_M] = "m", [KEY_N] = "n",
@@ -41,7 +40,7 @@ local lookup = {
 local lookupShift = {
 	[KEY_1] = "!", [KEY_2] = "@", [KEY_3] = "#", [KEY_4] = "$", [KEY_5] = "%", [KEY_6] = "^", [KEY_7] = "&", [KEY_8] = "*", [KEY_9] = "(", [KEY_0] = ")",
 	[KEY_LBRACKET] = "{", [KEY_RBRACKET] = "}", [KEY_SEMICOLON] = ":", [KEY_APOSTROPHE] = "\"", [KEY_COMMA] = "<", [KEY_PERIOD] = ">",
-	[KEY_SLASH] = "?", [KEY_BACKSLASH] = "|", [KEY_MINUS] = "_", [KEY_EQUAL] = "+"
+	[KEY_SLASH] = "?", [KEY_BACKSLASH] = "|", [KEY_MINUS] = "_", [KEY_EQUAL] = "+", [KEY_BACKQUOTE] = "~"
 }
 
 ---@param keycode integer
@@ -73,29 +72,19 @@ function Editor:Init(ide, panel)
 	end
 
 	do -- gutter
-		self.gutter = vgui.Create("DPanel", panel)
-		self.gutter:Dock(LEFT)
+		local gutter = vgui.Create("DPanel", panel)
+		gutter:Dock(LEFT)
 
+		self.gutter = gutter
 		self:UpdateGutter()
 	end
 
 	do -- actual editor part
 		local code_panel = vgui.Create("DTextEntry", panel)
 		code_panel:SetKeyboardInputEnabled(true)
-		code_panel:SetVerticalScrollbarEnabled(true)
 		code_panel:SetEnterAllowed(true)
 		code_panel:SetTabbingDisabled(true)
 		code_panel:Dock(FILL)
-
-		function code_panel.OnMouseWheeled(_, delta)
-			print("wheeled 2")
-			if delta > 0 and (self.top_row - delta) < 1 then return end
-			if delta < 0 and (self.top_row - delta + self.max_visible_rows - 2) > #self.rows then return end
-
-			self.top_row = self.top_row - delta
-
-			self:UpdateGutter()
-		end
 
 		function code_panel.OnKeyCode(_, keycode)
 			if keycode == KEY_LWIN then return end
@@ -107,33 +96,80 @@ function Editor:Init(ide, panel)
 			-- Todo: When arrow keys used and input.IsShiftDown(), set startcol and startrow to these (so it selects)
 
 			if keycode == KEY_RIGHT then
-				local bottom_row, bottom_col = self:GetCaretBottom()
-				if bottom_col < #self.rows[bottom_row] then -- There's room to move right.
-					self:SetCaret(bottom_col + 1, bottom_row)
-				elseif bottom_row < self.max_visible_rows and self.rows[bottom_row + 1] then -- Leaked onto next (bottom) line
-					self:SetCaret(1, bottom_row + 1)
+				local bottom_row, bottom_col = self:GetCaretBottomRight()
+				if input.IsShiftDown() then
+					if bottom_col <= #self.rows[bottom_row] then -- There's room to move right.
+						self.caret.endcol = self.caret.endcol + 1
+					elseif bottom_row < self.max_visible_rows and self.rows[bottom_row + 1] then -- Leaked onto next (bottom) line
+						self.caret.endcol = 1
+						self.caret.endrow = self.caret.endrow + 1
+					end
+				else
+					if bottom_col <= #self.rows[bottom_row] then -- There's room to move right.
+						self:SetCaret(bottom_col + 1, bottom_row)
+					elseif bottom_row < self.max_visible_rows and self.rows[bottom_row + 1] then -- Leaked onto next (bottom) line
+						self:SetCaret(1, bottom_row + 1)
+					else
+						self:SetCaret(#self.rows[bottom_row] + 1, bottom_row)
+					end
 				end
 			elseif keycode == KEY_LEFT then
-				local top_row, top_col = self:GetCaretTop()
-				if top_col > 1 then -- There's room to move left.
-					self:SetCaret(top_col - 1, top_row)
-				elseif top_row > 1 then -- Leaked onto previous (top) line
-					self:SetCaret(#self.rows[top_row - 1], top_row - 1)
+				local top_row, top_col = self:GetCaretTopLeft()
+				if input.IsShiftDown() then
+					if top_col > 1 then -- There's room to move left.
+						self.caret.endcol = self.caret.endcol - 1
+					elseif top_row > 1 then -- Leaked onto previous (top) line
+						if top_row <= self.top_row then -- Scroll editor upward
+							self.top_row = self.top_row - 1
+							self:UpdateGutter()
+						end
+						self.caret.endcol = #self.rows[top_row - 1]
+						self.caret.endrow = self.caret.endrow - 1
+					end
+				else
+					if top_col > 1 then -- There's room to move left.
+						self:SetCaret(top_col - 1, top_row)
+					elseif top_row > 1 then -- Leaked onto previous (top) line
+						self:SetCaret(#self.rows[top_row - 1], top_row - 1)
+					else
+						self:SetCaret(1, 1)
+					end
 				end
 			elseif keycode == KEY_UP then
-				local top_row, top_col = self:GetCaretTop()
-				if top_row > 1 then -- Not highest row, you can go up.
-					self:SetCaret(math.min(top_col, #self.rows[top_row - 1]), top_row - 1)
-				else -- Just move to column 1, no more rows above.
-					self:SetCaret(1, 1)
+				local top_row, top_col = self:GetCaretTopLeft()
+				if input.IsShiftDown() then
+					if top_row > 1 then -- Not highest row, you can go up.
+						self.caret.endcol = math.min(top_col, #self.rows[top_row - 1])
+						self.caret.endrow = self.caret.endrow - 1
+					else -- Just move to column 1, no more rows above.
+						self.caret.endcol = 1
+						self.caret.endrow = 1
+					end
+				else
+					if top_row > 1 then -- Not highest row, you can go up.
+						self:SetCaret(math.min(top_col, #self.rows[top_row - 1]), top_row - 1)
+					else -- Just move to column 1, no more rows above.
+						self:SetCaret(1, 1)
+					end
 				end
 			elseif keycode == KEY_DOWN then
 				local bottom_row, bottom_col = self:GetCaretBottom()
-				if bottom_row < self.max_visible_rows then
-					if self.rows[bottom_row + 1] then
-						self:SetCaret(math.min(bottom_col, #self.rows[bottom_row + 1]), bottom_row + 1)
-					else
-						self:SetCaret(#self.rows[bottom_row] + 1, bottom_row)
+				if input.IsShiftDown() then
+					if bottom_row < self.max_visible_rows then
+						if self.rows[bottom_row + 1] then
+							self.caret.endcol = math.min(bottom_col, #self.rows[bottom_row + 1])
+							self.caret.endrow = self.caret.endrow + 1
+						else
+							self.caret.endcol = #self.rows[bottom_row] + 1
+						end
+					end
+				else
+					if bottom_row < self.max_visible_rows then
+						if self.rows[bottom_row + 1] then
+							self:SetCaret(math.min(bottom_col, #self.rows[bottom_row + 1]), bottom_row + 1)
+						else
+							self:SetCaret(#self.rows[bottom_row] + 1, bottom_row)
+						end
 					end
 				end
 			else
@@ -217,24 +253,21 @@ function Editor:Init(ide, panel)
 			x = math.max(0, x - self.padding_left)
 			y = math.max(0, y - self.padding_top)
 
-			local col, row = math.Round(x / self.font_width) + 1, math.Round(y / self.font_height) + 1
+			local col, row = math.Round(x / self.font_width) + 1, math.Round(y / self.font_height) + self.top_row
 
 			local row_content = self.rows[row]
 			if row_content then
 				col = math.min(#row_content + 1, col)
 				return col, row
-			else
-				repeat
-					row = row - 1
-					row_content = self.rows[row]
-				until row_content or row < 1
-
-				if row_content then
-					col = math.min(#row_content + 1, col)
-					return col, row
-				else -- Completely empty file I guess.
-					return 1, 1
+			else -- Clicked row is empty.
+				for r = row, self.top_row, -1 do -- Go up until find a line with something on it.
+					local content = self.rows[r]
+					if content then
+						return math.min(#content + 1, col), r
+					end
 				end
+
+				return 1, 1 -- Completely empty file I guess
 			end
 		end
 
@@ -266,22 +299,26 @@ function Editor:Init(ide, panel)
 
 			surface.SetTextColor(255, 255, 255, 255)
 			surface.SetFont(self.font)
-			local bottom_row = self.top_row + self.max_visible_rows - 2
 
-			for i = bottom_row, self.top_row, -1 do
+			-- local bottom_row = self.top_row + self.max_visible_rows - 2
+
+			for i = 0, self.max_visible_rows - 1 do
+			-- for i = bottom_row, self.top_row, -1 do
 				-- Offset self.font_height down, Plus row offset. Drawing down -> up.
-				local row = self.rows[i]
-				if row then
-					local y = self.padding_top + (i - 1) * self.font_height
+				local row = i + self.top_row
+
+				local rowcontent = self.rows[row]
+				if rowcontent then
+					local y = self.padding_top + i * self.font_height
 					local x = self.padding_left
 
 					surface.SetTextPos(x, y)
-					surface.DrawText(row:Replace(" ", "-"))
+					surface.DrawText(rowcontent:Replace(" ", "-"))
 				end
 			end
 
 			surface.SetDrawColor(255, 200, 255, math.sin(SysTime() * 6 + 1) * 127.5)
-			surface.DrawRect(self.padding_left + (self.caret.endcol - 1) * self.font_width, self.padding_top + (self.caret.endrow - 1) * self.font_height, self.caret_width, self.font_height)
+			surface.DrawRect(self.padding_left + (self.caret.endcol - 1) * self.font_width, self.padding_top + (self.caret.endrow - self.top_row) * self.font_height, self.caret_width, self.font_height)
 
 			surface.SetDrawColor(82, 127, 199, 150)
 			if self.caret.startrow == self.caret.endrow then
@@ -289,24 +326,69 @@ function Editor:Init(ide, panel)
 				local leftmost, rightmost = math.min(self.caret.startcol, self.caret.endcol),
 					math.max(self.caret.startcol, self.caret.endcol)
 
-				surface.DrawRect(self.padding_left + (leftmost - 1) * self.font_width, self.padding_top + (self.caret.endrow - 1) * self.font_height, self.font_width * (rightmost - leftmost), self.font_height)
+				-- surface.DrawRect(self.padding_left + (leftmost - 1) * self.font_width, self.padding_top + (self.caret.endrow - 1) * self.font_height, self.font_width * (rightmost - leftmost), self.font_height)
 			else -- Okay, spans multiple rows.
 				local toprow, topcol = self:GetCaretTop()
 				local bottomrow, bottomcol = self:GetCaretBottom()
 
 				-- Draw top line
-				surface.DrawRect(self.padding_left + self.font_width * (topcol - 1), self.padding_top + (toprow - 1) * self.font_height, self.font_width * math.max(1, #self.rows[toprow] - topcol), self.font_height)
+				surface.DrawRect(self.padding_left + self.font_width * (topcol - 1), self.padding_top + (toprow - self.top_row) * self.font_height, self.font_width * math.max(1, #self.rows[toprow] - topcol), self.font_height)
 				-- Draw bottom line
-				surface.DrawRect(self.padding_left, self.padding_top + (bottomrow - 1) * self.font_height, (bottomcol - 1) * self.font_width, self.font_height)
+				surface.DrawRect(self.padding_left, self.padding_top + (bottomrow - self.top_row) * self.font_height, (bottomcol - 1) * self.font_width, self.font_height)
 
 				-- Draw rest of lines in between (selecting whole lines.)
+				-- for i = 0, self.max_visible_rows - 1 do
+					-- local row = i + self.top_row
 				for i = toprow + 1, bottomrow - 1 do
-					local row = self.rows[i]
-					if row then
-						surface.DrawRect(self.padding_left, self.padding_top + (i - 1) * self.font_height, self.font_width * #row, self.font_height)
+					local absi = i - self.top_row -- Get i in terms of 0 - max_visible_rows to draw properly
+					local rowcontent = self.rows[i]
+					if rowcontent then
+						surface.DrawRect(self.padding_left, self.padding_top + absi * self.font_height, self.font_width * #rowcontent, self.font_height)
 					end
 				end
 			end
+		end
+	end
+
+	do -- scrollbar
+		local scroll = vgui.Create("DPanel", panel)
+		scroll:SetWidth(panel:GetWide() * 0.015)
+		scroll:Dock(RIGHT)
+
+		local ratio = 0
+		local function cursorMoved(_, x, y)
+			ratio = y / panel:GetTall()
+			self.top_row = math.max(1, math.ceil(#self.rows * ratio))
+			self:UpdateGutter()
+			-- self:SetScroll(y / panel:GetTall())
+		end
+
+		function scroll.OnFocusChanged(_, gained)
+			print(gained)
+		end
+
+		function scroll.OnCursorExited(_)
+			scroll.OnCursorMoved = nil
+		end
+
+		function scroll.OnMousePressed(_, keycode)
+			if keycode == MOUSE_FIRST then
+				scroll.OnCursorMoved = cursorMoved
+			end
+		end
+
+		function scroll.OnMouseReleased(_, keycode)
+			if keycode == MOUSE_FIRST then
+				scroll.OnCursorMoved = nil
+			end
+		end
+
+		function scroll.Paint(_, width, height)
+			surface.SetDrawColor(100, 100, 100, 255)
+			surface.DrawRect(0, 0, width, height)
+
+			surface.SetDrawColor(150, 150, 150, 255)
+			surface.DrawRect(0, ratio * height, width, 50)
 		end
 	end
 
@@ -356,6 +438,11 @@ function Editor:SetCaret(col, row, endcol, endrow)
 	if endrow then endrow = math.max(1, endrow) end
 
 	self.caret = { startcol = col, endcol = endcol or col, startrow = row, endrow = endrow or row }
+end
+
+---@param percent number
+function Editor:SetScroll(percent)
+
 end
 
 --- Returns the bottom right part of the caret selection.  
@@ -432,12 +519,14 @@ function Editor:UpdateGutter()
 		surface.SetFont(self.font)
 		surface.SetTextColor(200, 200, 200, 255)
 
-		local bottom_row = top_row + max_visible_rows - 1
-		for i = top_row, bottom_row do
+		-- local bottom_row = top_row + max_visible_rows - 1
+		for i = 0, max_visible_rows - 1 do
+			local row = i + top_row
+		-- for i = top_row, bottom_row do
 			-- Offset self.font_height down, Plus row offset. Drawing down -> up.
-			local linestr = tostring(i)
+			local linestr = tostring(row)
 
-			local y = padding_top + (i - 1) * font_height
+			local y = padding_top + i * font_height
 			local x = (5 - #linestr) * self.font_width - self.gutter_padding_right
 
 			surface.SetTextPos(x, y)

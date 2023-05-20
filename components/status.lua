@@ -5,6 +5,12 @@ local Component = include("../component.lua")
 ---@field position: DButton
 local Status = Component.new("Status")
 
+---@param button DButton
+local function ButtonStyle(button, width, height)
+	surface.SetDrawColor(60, 60, 60, 255)
+	surface.DrawRect(0, 0, width, height)
+end
+
 ---@param ide IDE
 ---@param panel Panel
 function Status:Init(ide, panel)
@@ -15,6 +21,8 @@ function Status:Init(ide, panel)
 		local cornerstat = vgui.Create("DButton", panel)
 		cornerstat:SetWidth(ide:ScaleWidth(0.05))
 		cornerstat:Dock(LEFT)
+
+		cornerstat.Paint = ButtonStyle
 	end
 
 	do
@@ -23,6 +31,8 @@ function Status:Init(ide, panel)
 		language:SetText("Text")
 		language:Dock(RIGHT)
 		language:DockMargin(ide:ScaleWidth(0.1), 0, 0, 0)
+
+		language.Paint = ButtonStyle
 	end
 
 	do
@@ -30,6 +40,8 @@ function Status:Init(ide, panel)
 		position:SetWidth(ide:ScaleWidth(0.15))
 		position:SetText("Ln 29, Col 23")
 		position:Dock(RIGHT)
+
+		position.Paint = ButtonStyle
 
 		self.position = position
 	end
