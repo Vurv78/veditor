@@ -30,34 +30,7 @@ local Component = include("../component.lua")
 ---@field code DPanel
 local Editor = Component.new("Editor")
 
-local lookup = {
-	[KEY_0] = "0", [KEY_1] = "1", [KEY_2] = "2", [KEY_3] = "3", [KEY_4] = "4", [KEY_5] = "5", [KEY_6] = "6", [KEY_7] = "7", [KEY_8] = "8", [KEY_9] = "9",
-	[KEY_A] = "a", [KEY_B] = "b", [KEY_C] = "c", [KEY_D] = "d", [KEY_E] = "e", [KEY_F] = "f", [KEY_G] = "g", [KEY_H] = "h", [KEY_I] = "i", [KEY_J] = "j", [KEY_K] = "k", [KEY_L] = "l", [KEY_M] = "m",
-	[KEY_N] = "n", [KEY_O] = "o", [KEY_P] = "p", [KEY_Q] = "q", [KEY_R] = "r", [KEY_S] = "s", [KEY_T] = "t", [KEY_U] = "u", [KEY_V] = "v", [KEY_W] = "w", [KEY_X] = "x", [KEY_Y] = "y", [KEY_Z] = "z",
-	[KEY_SPACE] = " ", [KEY_LBRACKET] = "[", [KEY_RBRACKET] = "]", [KEY_SEMICOLON] = ";", [KEY_APOSTROPHE] = "'",
-	[KEY_COMMA] = ",", [KEY_PERIOD] = ".", [KEY_SLASH] = "/", [KEY_BACKSLASH] = "\\", [KEY_MINUS] = "-", [KEY_EQUAL] = "="
-}
-
-local lookupShift = {
-	[KEY_1] = "!", [KEY_2] = "@", [KEY_3] = "#", [KEY_4] = "$", [KEY_5] = "%", [KEY_6] = "^", [KEY_7] = "&", [KEY_8] = "*", [KEY_9] = "(", [KEY_0] = ")",
-	[KEY_LBRACKET] = "{", [KEY_RBRACKET] = "}", [KEY_SEMICOLON] = ":", [KEY_APOSTROPHE] = "\"", [KEY_COMMA] = "<", [KEY_PERIOD] = ">",
-	[KEY_SLASH] = "?", [KEY_BACKSLASH] = "|", [KEY_MINUS] = "_", [KEY_EQUAL] = "+", [KEY_BACKQUOTE] = "~"
-}
-
-local ignoredKeys = {
-	[KEY_LWIN] = true, [KEY_LSHIFT] = true, [KEY_LCONTROL] = true, [KEY_BACKQUOTE] = true
-}
-
 local default_styling = { { len = nil } }
-
----@param keycode integer
-local function pressedKey(keycode)
-	if input.IsShiftDown() then
-		return lookupShift[keycode] or (lookup[keycode] and lookup[keycode]:upper())
-	else
-		return lookup[keycode]
-	end
-end
 
 ---@param ide IDE
 ---@param panel Panel
@@ -96,18 +69,37 @@ function Editor:Init(ide, panel)
 		code_panel:SetTabbingDisabled(true)
 		code_panel:Dock(FILL)
 
+		code_panel:RequestFocus()
+
 		function code_panel.AllowInput(_, char)
+			if char == "`" then return end
+
+			local has_selection = self:HasSelection()
+			if has_selection then
+				-- Delete selection first.
+				-- Same code as multiline caret select. Should try and reuse them in a single function?
+				self:DeleteSelection()
+			end
+
+			local col, row = self.caret.endcol, self.caret.endrow
+			local rowcontent = self.rows[row]
+
+
+			if rowcontent then
+				self.rows[row] = rowcontent:sub(1, col - 1) .. char .. rowcontent:sub(col)
+			else
+				self.rows[row] = char
+			end
+
+			self:SetCaret(col + 1, row)
 		end
-
 		function code_panel.OnKeyCode(_, keycode)
-			if ignoredKeys[keycode] then return end
-
 			if input.IsControlDown() then
 				if keycode == KEY_A then -- Ctrl + A, select all
 					self:SetCaret(1, 1, #self.rows[#self.rows], #self.rows)
 					return
 				elseif keycode == KEY_C then -- Ctrl + C, copy
-					SetClipboardText(self:GetSelection())
+					SetClipboardText(self:GetSelection() or "")
 					return
 				end
 			end
@@ -189,67 +181,39 @@ function Editor:Init(ide, panel)
 						end
 					end
 				end
-			else
-				local has_selection = self:HasSelection()
-				if has_selection then
-					-- Delete selection first.
-					-- Same code as multiline caret select. Should try and reuse them in a single function?
-
-					local toprow, topcol = self:GetCaretTopLeft()
-					local bottomrow, bottomcol = self:GetCaretBottomRight()
-
-					self.rows[toprow] = self.rows[toprow]:sub(1, topcol - 1) .. self.rows[bottomrow]:sub(bottomcol)
-
-					if toprow ~= bottomrow then -- Delete every row besides first row. Pretty bad O(n) operation
-						for _ = toprow + 1, bottomrow do
-							table.remove(self.rows, toprow + 1)
-						end
-					end
-
-					self:SetCaret(topcol, toprow)
-				end
+			elseif keycode == KEY_BACKSPACE then
+				if self:DeleteSelection() then return end
 
 				local col, row = self.caret.endcol, self.caret.endrow
 				local rowcontent = self.rows[row]
 
-				if keycode == KEY_BACKSPACE then
-					if has_selection then return end
+				if col > 1 then
+					self.rows[row] = rowcontent:sub(1, col - 2) .. rowcontent:sub(col)
+					self:SetCaret(col - 1, row)
+				elseif row > 1 then -- deleted the line, move up
+					local rest = table.remove(self.rows, row)
+					self:SetCaret(#self.rows[row - 1] + 1, row - 1) -- Set caret to end of top line
+					self.rows[row - 1] = self.rows[row - 1] .. rest -- Append rest of content to top line
+				end -- Do nothing, at top of editor.
+			elseif keycode == KEY_ENTER then
+				self:DeleteSelection()
 
-					if col > 1 then
-						if rowcontent then
-							self.rows[row] = rowcontent:sub(1, col - 2) .. rowcontent:sub(col)
-						else -- This shouldn't be possible.. need to look into this.
-							self.rows[row] = ""
-						end
+				local col, row = self.caret.endcol, self.caret.endrow
+				local rowcontent = self.rows[row]
 
-						self:SetCaret(col - 1, row)
-					elseif row > 1 then -- deleted the line, move up
-						local rest = table.remove(self.rows, row)
-						self:SetCaret(#self.rows[row - 1] + 1, row - 1) -- Set caret to end of top line
-						self.rows[row - 1] = self.rows[row - 1] .. rest -- Append rest of content to top line
-					end -- Do nothing, at top of editor.
-				elseif keycode == KEY_ENTER then
-					self.rows[row] = rowcontent and rowcontent:sub(1, col - 1) or ""
-					table.insert(self.rows, row + 1, rowcontent and rowcontent:sub(col) or "")
-					self:SetCaret(1, row + 1)
-				elseif keycode == KEY_TAB then
-					if rowcontent then
-						self.rows[row] = rowcontent:sub(1, col - 1) .. "    " .. rowcontent:sub(col)
-					else
-						self.rows[row] = "    "
-					end
-					self:SetCaret(col + 4, row)
+				self.rows[row] = rowcontent and rowcontent:sub(1, col - 1) or ""
+				table.insert(self.rows, row + 1, rowcontent and rowcontent:sub(col) or "")
+				self:SetCaret(1, row + 1)
+			elseif keycode == KEY_TAB then
+				local col, row = self.caret.endcol, self.caret.endrow
+				local rowcontent = self.rows[row]
+
+				if rowcontent then
+					self.rows[row] = rowcontent:sub(1, col - 1) .. "    " .. rowcontent:sub(col)
 				else
-					local key = pressedKey(keycode)
-					if not key then return end
-
-					if rowcontent then
-						self.rows[row] = rowcontent:sub(1, col - 1) .. key .. rowcontent:sub(col)
-					else
-						self.rows[row] = key
-					end
-					self:SetCaret(col + 1, row)
+					self.rows[row] = "    "
 				end
+				self:SetCaret(col + 4, row)
 			end
 
 			return true
@@ -305,6 +269,7 @@ function Editor:Init(ide, panel)
 		function code_panel.OnMouseWheeled(_, delta)
 			self.top_row = math.Clamp(self.top_row - delta, 1, #self.rows)
 			scroll_ratio = self.top_row / #self.rows
+			self:UpdateGutter()
 		end
 
 		function code_panel.Paint(_, width, height)
@@ -425,6 +390,7 @@ function Editor:SetFont(fontname, size)
 		surface.CreateFont(mangle, {
 			font = fontname,
 			size = size,
+			antialias = true,
 			shadow = true,
 			extended = true
 		})
@@ -440,7 +406,7 @@ function Editor:SetFont(fontname, size)
 	self.padding_top = self.font_height * 0.3
 	self.padding_left = self.font_width * 2
 	self.caret_width = self.font_width * 0.2
-	self.gutter_padding_right = self.font_width * 0.4
+	self.gutter_padding_right = self.font_width * 1
 end
 
 ---@param txt string
@@ -468,8 +434,8 @@ function Editor:SetScroll(percent)
 	self.top_row = #self.rows * percent
 end
 
---- Returns the bottom right part of the caret selection.  
---- This will usually be bottom right, unless the caret is on a single line, where it is not guaranteed.  
+--- Returns the bottom right part of the caret selection.
+--- This will usually be bottom right, unless the caret is on a single line, where it is not guaranteed.
 ---@see Editor.GetCaretBottomRight if you want that case covered.
 ---@return integer row
 ---@return integer col
@@ -547,6 +513,24 @@ function Editor:GetSelection()
 	return table.concat(buf, "", 1, nbuf)
 end
 
+function Editor:DeleteSelection()
+	if not self:HasSelection() then return false end
+
+	local toprow, topcol = self:GetCaretTopLeft()
+	local bottomrow, bottomcol = self:GetCaretBottomRight()
+
+	self.rows[toprow] = self.rows[toprow]:sub(1, topcol - 1) .. self.rows[bottomrow]:sub(bottomcol)
+
+	if toprow ~= bottomrow then -- Delete every row besides first row. Pretty bad O(n) operation
+		for _ = toprow + 1, bottomrow do
+			table.remove(self.rows, toprow + 1)
+		end
+	end
+
+	self:SetCaret(topcol, toprow)
+	return true
+end
+
 function Editor:UpdateGutter()
 	local gutter = self.gutter
 
@@ -554,9 +538,11 @@ function Editor:UpdateGutter()
 	local top_row, max_visible_rows = self.top_row, self.max_visible_rows
 	local padding_top = self.padding_top
 
-	gutter:SetWidth(font_width * 5 + self.gutter_padding_right)
+	gutter:SetWidth(font_width * 6 + self.gutter_padding_right)
 
 	function gutter.Paint(_, width, height)
+		self:Highlight()
+
 		surface.SetDrawColor(40, 40, 40, 255)
 		surface.DrawRect(0, 0, width, height)
 
@@ -566,14 +552,87 @@ function Editor:UpdateGutter()
 		for i = 0, max_visible_rows - 1 do
 			local row = i + top_row
 			-- Offset self.font_height down, Plus row offset. Drawing down -> up.
+
+			if not self.rows[row] then
+				break
+			end
+
 			local linestr = tostring(row)
 
 			local y = padding_top + i * font_height
-			local x = (5 - #linestr) * self.font_width - self.gutter_padding_right
+			local x = (6 - #linestr) * self.font_width - self.gutter_padding_right
 
 			surface.SetTextPos(x, y)
 			surface.DrawText(linestr)
 		end
+	end
+end
+
+local color_number = Color(129, 204, 122)
+local color_ident = Color(156, 220, 254)
+local color_keyword = Color(197, 134, 192)
+local color_string = Color(206, 145, 120)
+
+local keywords = {
+	["function"] = true, ["local"] = true, ["end"] = true, ["true"] = true, ["false"] = true,
+	["while"] = true, ["for"] = true, ["in"] = true, ["repeat"] = true, ["if"] = true, ["else"] = true,
+	["elseif"] = true, ["until"] = true, ["goto"] = true, ["do"] = true
+}
+
+function Editor:Highlight()
+	for i, row in ipairs(self.rows) do
+		local styles = {}
+		local ptr, len = 1, #row
+		while ptr <= len do
+			local _, ed, num = row:find("^(%d+%.%d+)", ptr)
+			if num then
+				styles[#styles + 1] = { fg = color_number, len = ed - ptr + 1 }
+				ptr = ed + 1
+				goto cont
+			end
+
+			local _, ed, num = row:find("^(%d+)", ptr)
+			if num then
+				styles[#styles + 1] = { fg = color_number, len = ed - ptr + 1 }
+				ptr = ed + 1
+				goto cont
+			end
+
+			local _, ed, str = row:find("^('[^']*')", ptr)
+			if str then
+				styles[#styles + 1] = { fg = color_string, len = ed - ptr + 1 }
+
+				ptr = ed + 1
+				goto cont
+			end
+
+			local _, ed, str = row:find("^(\"[^\"]*\")", ptr)
+			if str then
+				styles[#styles + 1] = { fg = color_string, len = ed - ptr + 1 }
+
+				ptr = ed + 1
+				goto cont
+			end
+
+			local _, ed, ident = row:find("^([%w_]+)", ptr)
+			if ident then
+				if keywords[ident] then
+					styles[#styles + 1] = { fg = color_keyword, len = ed - ptr + 1 }
+				else
+					styles[#styles + 1] = { fg = color_ident, len = ed - ptr + 1 }
+				end
+
+				ptr = ed + 1
+				goto cont
+			end
+
+			styles[#styles + 1] = { fg = color_white, len = 1 }
+			ptr = ptr + 1
+
+			::cont::
+		end
+
+		self.row_styles[i] = styles
 	end
 end
 
