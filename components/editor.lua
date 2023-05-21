@@ -31,8 +31,8 @@ local Editor = Component.new("Editor")
 
 local lookup = {
 	[KEY_0] = "0", [KEY_1] = "1", [KEY_2] = "2", [KEY_3] = "3", [KEY_4] = "4", [KEY_5] = "5", [KEY_6] = "6", [KEY_7] = "7", [KEY_8] = "8", [KEY_9] = "9",
-	[KEY_A] = "a", [KEY_B] = "b", [KEY_C] = "c", [KEY_D] = "d", [KEY_E] = "e", [KEY_F] = "f", [KEY_G] = "g", [KEY_H] = "h", [KEY_I] = "i", [KEY_J] = "j", [KEY_L] = "l", [KEY_M] = "m", [KEY_N] = "n",
-	[KEY_O] = "o", [KEY_P] = "p", [KEY_Q] = "q", [KEY_R] = "r", [KEY_S] = "s", [KEY_T] = "t", [KEY_U] = "u", [KEY_V] = "v", [KEY_W] = "w", [KEY_X] = "x", [KEY_Y] = "y", [KEY_Z] = "z",
+	[KEY_A] = "a", [KEY_B] = "b", [KEY_C] = "c", [KEY_D] = "d", [KEY_E] = "e", [KEY_F] = "f", [KEY_G] = "g", [KEY_H] = "h", [KEY_I] = "i", [KEY_J] = "j", [KEY_K] = "k", [KEY_L] = "l", [KEY_M] = "m",
+	[KEY_N] = "n", [KEY_O] = "o", [KEY_P] = "p", [KEY_Q] = "q", [KEY_R] = "r", [KEY_S] = "s", [KEY_T] = "t", [KEY_U] = "u", [KEY_V] = "v", [KEY_W] = "w", [KEY_X] = "x", [KEY_Y] = "y", [KEY_Z] = "z",
 	[KEY_SPACE] = " ", [KEY_LBRACKET] = "[", [KEY_RBRACKET] = "]", [KEY_SEMICOLON] = ";", [KEY_APOSTROPHE] = "'",
 	[KEY_COMMA] = ",", [KEY_PERIOD] = ".", [KEY_SLASH] = "/", [KEY_BACKSLASH] = "\\", [KEY_MINUS] = "-", [KEY_EQUAL] = "="
 }
@@ -166,7 +166,7 @@ function Editor:Init(ide, panel)
 				else
 					if bottom_row < self.max_visible_rows then
 						if self.rows[bottom_row + 1] then
-							self:SetCaret(math.min(bottom_col, #self.rows[bottom_row + 1]), bottom_row + 1)
+							self:SetCaret(math.min(bottom_col, #self.rows[bottom_row + 1] + 1), bottom_row + 1)
 						else
 							self:SetCaret(#self.rows[bottom_row] + 1, bottom_row)
 						end
@@ -185,14 +185,13 @@ function Editor:Init(ide, panel)
 						self.rows[toprow] = self.rows[toprow]:sub(1, topcol - 1) .. self.rows[toprow]:sub(bottomcol)
 					else
 						self.rows[toprow] = self.rows[toprow]:sub(1, topcol - 1)
-						self.rows[bottomrow] = self.rows[bottomrow]:sub(bottomcol + 1)
 
-						-- Delete rows in between
-						for i = toprow + 1, bottomrow - 1 do
-							local row = self.rows[i]
-							if row then
-								table.remove(self.rows, toprow + 1)
-							end
+						self.rows[bottomrow] = self.rows[bottomrow]:sub(bottomcol + 1)
+						if #self.rows[bottomrow] == 0 then table.remove(self.rows, bottomrow) end
+
+						-- Delete rows in between. Very bad O(n) operation
+						for _ = toprow + 1, bottomrow - 1 do
+							table.remove(self.rows, toprow + 1)
 						end
 					end
 
@@ -313,7 +312,7 @@ function Editor:Init(ide, panel)
 					local x = self.padding_left
 
 					surface.SetTextPos(x, y)
-					surface.DrawText(rowcontent:Replace(" ", "-"))
+					surface.DrawText(rowcontent:Replace(" ", "•"):Replace("\t", "→"))
 				end
 			end
 
@@ -326,7 +325,7 @@ function Editor:Init(ide, panel)
 				local leftmost, rightmost = math.min(self.caret.startcol, self.caret.endcol),
 					math.max(self.caret.startcol, self.caret.endcol)
 
-				-- surface.DrawRect(self.padding_left + (leftmost - 1) * self.font_width, self.padding_top + (self.caret.endrow - 1) * self.font_height, self.font_width * (rightmost - leftmost), self.font_height)
+				surface.DrawRect(self.padding_left + (leftmost - 1) * self.font_width, self.padding_top + (self.caret.endrow - self.top_row) * self.font_height, self.font_width * (rightmost - leftmost), self.font_height)
 			else -- Okay, spans multiple rows.
 				local toprow, topcol = self:GetCaretTop()
 				local bottomrow, bottomcol = self:GetCaretBottom()
@@ -403,7 +402,8 @@ function Editor:SetFont(fontname, size)
 		surface.CreateFont(mangle, {
 			font = fontname,
 			size = size,
-			shadow = true
+			shadow = true,
+			extended = true
 		})
 		self.fonts[mangle] = true
 	end
