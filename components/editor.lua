@@ -295,10 +295,10 @@ function Editor:Init(ide, panel)
 						surface.SetFont(style.font or self.font)
 
 						if style.len then
-							surface.DrawText(content:sub(ptr, style.len and (ptr + style.len - 1)))
+							surface.DrawText(content:sub(ptr, style.len and (ptr + style.len - 1)):Replace(" ", "•"))
 							ptr = ptr + style.len
 						else
-							surface.DrawText(content)
+							surface.DrawText(content:Replace(" ", "•"))
 						end
 					end
 				end
@@ -572,6 +572,7 @@ local color_number = Color(129, 204, 122)
 local color_ident = Color(156, 220, 254)
 local color_keyword = Color(197, 134, 192)
 local color_string = Color(206, 145, 120)
+local color_whitespace = Color(255, 255, 255, 5)
 
 local keywords = {
 	["function"] = true, ["local"] = true, ["end"] = true, ["true"] = true, ["false"] = true,
@@ -621,6 +622,14 @@ function Editor:Highlight()
 				else
 					styles[#styles + 1] = { fg = color_ident, len = ed - ptr + 1 }
 				end
+
+				ptr = ed + 1
+				goto cont
+			end
+
+			local _, ed, ws = row:find("^(%s+)", ptr)
+			if ws then
+				styles[#styles + 1] = { fg = color_whitespace, len = ed - ptr + 1 }
 
 				ptr = ed + 1
 				goto cont
