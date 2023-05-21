@@ -5,11 +5,11 @@ local Component = include("../component.lua")
 ---
 ---@field rows string[]
 ---@field row_styles { fg: Color?, bg: Color?, font: string?, len: integer? }[][]
----
----@field caret { startcol: integer, endcol: integer, startrow: integer, endrow: integer }
----
+---@field row_folds table<integer, integer> start -> end
 ---@field top_row integer
 ---@field max_visible_rows integer
+---
+---@field caret { startcol: integer, endcol: integer, startrow: integer, endrow: integer }
 ---
 ---@field caret_width number
 ---@field padding_top number # Vertical padding between toolbox and gutter/editor.
@@ -40,9 +40,13 @@ function Editor:Init(ide, panel)
 	do
 		self.rows = {}
 		self.row_styles = {}
+		self.row_folds =  {}
 		self.top_row = 1
+
 		self.fonts = {}
 		self.caret = { startcol = 1, endcol = 1, startrow = 1, endrow = 1 }
+
+		self.gutter_len = 6
 
 		panel:SetSize(ide:ScaleWidth(0.8), ide:ScaleHeight(0.92))
 		panel:Dock(RIGHT)
@@ -54,10 +58,42 @@ function Editor:Init(ide, panel)
 
 	do -- gutter
 		local gutter = vgui.Create("DPanel", panel)
+		gutter:SetWidth(6 * self.font_width + self.gutter_padding_right)
 		gutter:Dock(LEFT)
 
-		self.gutter = gutter
-		self:UpdateGutter()
+		function gutter.Paint(_, width, height)
+			self:Highlight()
+
+			surface.SetDrawColor(40, 40, 40, 255)
+			surface.DrawRect(0, 0, width, height)
+
+			surface.SetFont(self.font)
+			surface.SetTextColor(200, 200, 200, 255)
+
+			local i, row = 0, self.top_row
+			while i < self.max_visible_rows - 1 do
+				if not self.rows[row] then
+					break
+				end
+
+				local linestr = tostring(row)
+
+				-- Offset self.font_height down, Plus row offset. Drawing down -> up.
+				local y = self.padding_top + i * self.font_height
+				local x = (self.gutter_len - #linestr) * self.font_width - self.gutter_padding_right
+
+				surface.SetTextPos(x, y)
+				surface.DrawText(linestr)
+
+				if self.row_folds[row] then -- Exclusive fold, 3 - 6 hides 4, 5
+					row = self.row_folds[row]
+				else
+					row = row + 1
+				end
+
+				i = i + 1
+			end
+		end
 	end
 
 	local scroll_ratio = 0
@@ -74,16 +110,11 @@ function Editor:Init(ide, panel)
 		function code_panel.AllowInput(_, char)
 			if char == "`" then return end
 
-			local has_selection = self:HasSelection()
-			if has_selection then
-				-- Delete selection first.
-				-- Same code as multiline caret select. Should try and reuse them in a single function?
-				self:DeleteSelection()
-			end
+			-- Delete any selection first.
+			self:DeleteSelection()
 
 			local col, row = self.caret.endcol, self.caret.endrow
 			local rowcontent = self.rows[row]
-
 
 			if rowcontent then
 				self.rows[row] = rowcontent:sub(1, col - 1) .. char .. rowcontent:sub(col)
@@ -93,6 +124,7 @@ function Editor:Init(ide, panel)
 
 			self:SetCaret(col + 1, row)
 		end
+
 		function code_panel.OnKeyCode(_, keycode)
 			if input.IsControlDown() then
 				if keycode == KEY_A then -- Ctrl + A, select all
@@ -130,7 +162,6 @@ function Editor:Init(ide, panel)
 					elseif top_row > 1 then -- Leaked onto previous (top) line
 						if top_row <= self.top_row then -- Scroll editor upward
 							self.top_row = self.top_row - 1
-							self:UpdateGutter()
 						end
 						self.caret.endcol = #self.rows[top_row - 1]
 						self.caret.endrow = self.caret.endrow - 1
@@ -221,12 +252,18 @@ function Editor:Init(ide, panel)
 
 		---@param x number
 		---@param y number
-		---@return integer x, integer row
+		---@return integer vcol, integer vrow
 		local function calculatePos(x, y)
 			x = math.max(0, x - self.padding_left)
 			y = math.max(0, y - self.padding_top)
 
-			local col, row = math.Round(x / self.font_width) + 1, math.Round(y / self.font_height) + self.top_row
+			local col, row = math.Round(x / self.font_width) + 1, math.floor(y / self.font_height) + self.top_row
+
+			--[[local abs_row = row
+			for start, ed in pairs(self.row_folds) do
+				if start > row then break end
+				abs_row = abs_row + (ed - start - 1)
+			end]]
 
 			local row_content = self.rows[row]
 			if row_content then
@@ -236,7 +273,7 @@ function Editor:Init(ide, panel)
 				for r = row, self.top_row, -1 do -- Go up until find a line with something on it.
 					local content = self.rows[r]
 					if content then
-						return math.min(#content + 1, col), r
+						return math.min(#content + 1, col), r, abs_row
 					end
 				end
 
@@ -269,7 +306,6 @@ function Editor:Init(ide, panel)
 		function code_panel.OnMouseWheeled(_, delta)
 			self.top_row = math.Clamp(self.top_row - delta, 1, #self.rows)
 			scroll_ratio = self.top_row / #self.rows
-			self:UpdateGutter()
 		end
 
 		function code_panel.Paint(_, width, height)
@@ -278,30 +314,43 @@ function Editor:Init(ide, panel)
 
 			surface.SetFont(self.font)
 
-			for i = 0, self.max_visible_rows - 1 do
+			local i, row = 0, self.top_row
+			while i < self.max_visible_rows - 1 do
 				-- Offset self.font_height down, Plus row offset. Drawing down -> up.
-				local row = i + self.top_row
 				local content = self.rows[row]
+				if not content then
+					break
+				end
 
-				if content then
-					local y = self.padding_top + i * self.font_height
-					local x = self.padding_left
+				if self.row_folds[row] then -- Inclusive fold, 3 - 6 hides 3, 4, 5, 6.
+					row = self.row_folds[row] + 1
+				end
 
-					surface.SetTextPos(x, y)
+				local y = self.padding_top + i * self.font_height
+				local x = self.padding_left
 
-					local ptr = 1
-					for _, style in ipairs(self.row_styles[row] or default_styling) do
-						surface.SetTextColor(style.fg or color_white)
-						surface.SetFont(style.font or self.font)
+				surface.SetTextPos(x, y)
 
-						if style.len then
-							surface.DrawText(content:sub(ptr, style.len and (ptr + style.len - 1)):Replace(" ", "•"))
-							ptr = ptr + style.len
-						else
-							surface.DrawText(content:Replace(" ", "•"))
-						end
+				local ptr = 1
+				for _, style in ipairs(self.row_styles[row] or default_styling) do
+					surface.SetTextColor(style.fg or color_white)
+					surface.SetFont(style.font or self.font)
+
+					if style.len then
+						surface.DrawText(content:sub(ptr, style.len and (ptr + style.len - 1)):Replace(" ", "•"))
+						ptr = ptr + style.len
+					else
+						surface.DrawText(content:Replace(" ", "•"))
 					end
 				end
+
+				if self.row_folds[row] then -- Exclusive fold, 3 - 6 hides 4, 5
+					row = self.row_folds[row]
+				else
+					row = row + 1
+				end
+
+				i = i + 1
 			end
 
 			-- Draw caret blinker
@@ -346,7 +395,6 @@ function Editor:Init(ide, panel)
 		local function cursorMoved(_, x, y)
 			scroll_ratio = y / panel:GetTall()
 			self.top_row = math.max(1, math.ceil(#self.rows * scroll_ratio))
-			self:UpdateGutter()
 		end
 
 		function scroll.OnCursorExited(_)
@@ -529,43 +577,6 @@ function Editor:DeleteSelection()
 
 	self:SetCaret(topcol, toprow)
 	return true
-end
-
-function Editor:UpdateGutter()
-	local gutter = self.gutter
-
-	local font, font_width, font_height = self.font, self.font_width, self.font_height
-	local top_row, max_visible_rows = self.top_row, self.max_visible_rows
-	local padding_top = self.padding_top
-
-	gutter:SetWidth(font_width * 6 + self.gutter_padding_right)
-
-	function gutter.Paint(_, width, height)
-		self:Highlight()
-
-		surface.SetDrawColor(40, 40, 40, 255)
-		surface.DrawRect(0, 0, width, height)
-
-		surface.SetFont(font)
-		surface.SetTextColor(200, 200, 200, 255)
-
-		for i = 0, max_visible_rows - 1 do
-			local row = i + top_row
-			-- Offset self.font_height down, Plus row offset. Drawing down -> up.
-
-			if not self.rows[row] then
-				break
-			end
-
-			local linestr = tostring(row)
-
-			local y = padding_top + i * font_height
-			local x = (6 - #linestr) * self.font_width - self.gutter_padding_right
-
-			surface.SetTextPos(x, y)
-			surface.DrawText(linestr)
-		end
-	end
 end
 
 local color_number = Color(129, 204, 122)
