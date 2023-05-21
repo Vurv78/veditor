@@ -213,10 +213,9 @@ function Editor:Init(ide, panel)
 
 						self:SetCaret(col - 1, row)
 					elseif row > 1 then -- deleted the line, move up
-						local rest = self.rows[row]
+						local rest = table.remove(self.rows, row)
+						self:SetCaret(#self.rows[row - 1] + 1, row - 1) -- Set caret to end of top line
 						self.rows[row - 1] = self.rows[row - 1] .. rest -- Append rest of content to top line
-						table.remove(self.rows, row)
-						self:SetCaret(#self.rows[row - 1] - #rest, row - 1)
 					end -- Do nothing, at top of editor.
 				elseif keycode == KEY_ENTER then
 					self.rows[row] = rowcontent and rowcontent:sub(1, col - 1) or ""
