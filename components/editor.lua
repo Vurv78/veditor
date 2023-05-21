@@ -96,8 +96,21 @@ function Editor:Init(ide, panel)
 		code_panel:SetTabbingDisabled(true)
 		code_panel:Dock(FILL)
 
+		function code_panel.AllowInput(_, char)
+		end
+
 		function code_panel.OnKeyCode(_, keycode)
 			if ignoredKeys[keycode] then return end
+
+			if input.IsControlDown() then
+				if keycode == KEY_A then -- Ctrl + A, select all
+					self:SetCaret(1, 1, #self.rows[#self.rows], #self.rows)
+					return
+				elseif keycode == KEY_C then -- Ctrl + C, copy
+					SetClipboardText(self:GetSelection())
+					return
+				end
+			end
 
 			if keycode == KEY_RIGHT then
 				local bottom_row, bottom_col = self:GetCaretBottomRight()
@@ -294,7 +307,7 @@ function Editor:Init(ide, panel)
 			scroll_ratio = self.top_row / #self.rows
 		end
 
-		code_panel.Paint = function(_, width, height)
+		function code_panel.Paint(_, width, height)
 			surface.SetDrawColor(50, 50, 50, 255)
 			surface.DrawRect(0, 0, width, height)
 
@@ -327,7 +340,7 @@ function Editor:Init(ide, panel)
 			end
 
 			-- Draw caret blinker
-			surface.SetDrawColor(255, 200, 255, math.sin(SysTime() * 6 + 1) * 127.5)
+			surface.SetDrawColor(255, 200, 255, math.sin(SysTime() * 7 + 1) * 127.5)
 			surface.DrawRect(self.padding_left + (self.caret.endcol - 1) * self.font_width, self.padding_top + (self.caret.endrow - self.top_row) * self.font_height, self.caret_width, self.font_height)
 
 			if self:HasSelection() then -- Draw caret selection.
@@ -511,6 +524,27 @@ end
 function Editor:HasSelection()
 	return self.caret.startcol ~= self.caret.endcol
 		or self.caret.startrow ~= self.caret.endrow
+end
+
+function Editor:GetSelection()
+	if not self:HasSelection() then return end
+
+	local toprow, topcol = self:GetCaretTopLeft()
+	local bottomrow, bottomcol = self:GetCaretBottomRight()
+
+	local buf, nbuf = { self.rows[toprow]:sub(topcol) }, 1
+
+	if toprow ~= bottomrow then  -- Copy every row in between
+		for i = toprow + 1, bottomrow do
+			nbuf = nbuf + 1
+			buf[nbuf] = self.rows[i]
+		end
+	end
+
+	nbuf = nbuf + 1
+	buf[nbuf] = self.rows[bottomrow]:sub(1, bottomcol)
+
+	return table.concat(buf, "", 1, nbuf)
 end
 
 function Editor:UpdateGutter()
