@@ -4,6 +4,7 @@ local Component = include("../component.lua")
 ---@class Editor: Component
 ---
 ---@field rows string[]
+---@field row_styles { fg: Color?, bg: Color?, font: string?, len: integer? }[][]
 ---
 ---@field caret { startcol: integer, endcol: integer, startrow: integer, endrow: integer }
 ---
@@ -43,6 +44,12 @@ local lookupShift = {
 	[KEY_SLASH] = "?", [KEY_BACKSLASH] = "|", [KEY_MINUS] = "_", [KEY_EQUAL] = "+", [KEY_BACKQUOTE] = "~"
 }
 
+local ignoredKeys = {
+	[KEY_LWIN] = true, [KEY_LSHIFT] = true, [KEY_LCONTROL] = true, [KEY_BACKQUOTE] = true
+}
+
+local default_styling = { { len = nil } }
+
 ---@param keycode integer
 local function pressedKey(keycode)
 	if input.IsShiftDown() then
@@ -59,6 +66,7 @@ function Editor:Init(ide, panel)
 
 	do
 		self.rows = {}
+		self.row_styles = {}
 		self.top_row = 1
 		self.fonts = {}
 		self.caret = { startcol = 1, endcol = 1, startrow = 1, endrow = 1 }
@@ -79,6 +87,8 @@ function Editor:Init(ide, panel)
 		self:UpdateGutter()
 	end
 
+	local scroll_ratio = 0
+
 	do -- actual editor part
 		local code_panel = vgui.Create("DTextEntry", panel)
 		code_panel:SetKeyboardInputEnabled(true)
@@ -87,13 +97,7 @@ function Editor:Init(ide, panel)
 		code_panel:Dock(FILL)
 
 		function code_panel.OnKeyCode(_, keycode)
-			if keycode == KEY_LWIN then return end
-			if keycode == KEY_LSHIFT then return end
-			if keycode == KEY_LCONTROL then return end
-			if keycode == KEY_BACKQUOTE then return end
-
-			local oldcol, oldrow = self.caret.endcol, self.caret.endrow
-			-- Todo: When arrow keys used and input.IsShiftDown(), set startcol and startrow to these (so it selects)
+			if ignoredKeys[keycode] then return end
 
 			if keycode == KEY_RIGHT then
 				local bottom_row, bottom_col = self:GetCaretBottomRight()
@@ -130,7 +134,7 @@ function Editor:Init(ide, panel)
 					if top_col > 1 then -- There's room to move left.
 						self:SetCaret(top_col - 1, top_row)
 					elseif top_row > 1 then -- Leaked onto previous (top) line
-						self:SetCaret(#self.rows[top_row - 1], top_row - 1)
+						self:SetCaret(#self.rows[top_row - 1] + 1, top_row - 1)
 					else
 						self:SetCaret(1, 1)
 					end
@@ -181,16 +185,10 @@ function Editor:Init(ide, panel)
 					local toprow, topcol = self:GetCaretTopLeft()
 					local bottomrow, bottomcol = self:GetCaretBottomRight()
 
-					if toprow == bottomrow then
-						self.rows[toprow] = self.rows[toprow]:sub(1, topcol - 1) .. self.rows[toprow]:sub(bottomcol)
-					else
-						self.rows[toprow] = self.rows[toprow]:sub(1, topcol - 1)
+					self.rows[toprow] = self.rows[toprow]:sub(1, topcol - 1) .. self.rows[bottomrow]:sub(bottomcol)
 
-						self.rows[bottomrow] = self.rows[bottomrow]:sub(bottomcol + 1)
-						if #self.rows[bottomrow] == 0 then table.remove(self.rows, bottomrow) end
-
-						-- Delete rows in between. Very bad O(n) operation
-						for _ = toprow + 1, bottomrow - 1 do
+					if toprow ~= bottomrow then -- Delete every row besides first row. Pretty bad O(n) operation
+						for _ = toprow + 1, bottomrow do
 							table.remove(self.rows, toprow + 1)
 						end
 					end
@@ -291,57 +289,71 @@ function Editor:Init(ide, panel)
 			end
 		end
 
+		function code_panel.OnMouseWheeled(_, delta)
+			self.top_row = math.Clamp(self.top_row - delta, 1, #self.rows)
+			scroll_ratio = self.top_row / #self.rows
+		end
+
 		code_panel.Paint = function(_, width, height)
 			surface.SetDrawColor(50, 50, 50, 255)
 			surface.DrawRect(0, 0, width, height)
 
-			surface.SetTextColor(255, 255, 255, 255)
 			surface.SetFont(self.font)
 
-			-- local bottom_row = self.top_row + self.max_visible_rows - 2
-
 			for i = 0, self.max_visible_rows - 1 do
-			-- for i = bottom_row, self.top_row, -1 do
 				-- Offset self.font_height down, Plus row offset. Drawing down -> up.
 				local row = i + self.top_row
+				local content = self.rows[row]
 
-				local rowcontent = self.rows[row]
-				if rowcontent then
+				if content then
 					local y = self.padding_top + i * self.font_height
 					local x = self.padding_left
 
 					surface.SetTextPos(x, y)
-					surface.DrawText(rowcontent:Replace(" ", "•"):Replace("\t", "→"))
+
+					local ptr = 1
+					for _, style in ipairs(self.row_styles[row] or default_styling) do
+						surface.SetTextColor(style.fg or color_white)
+						surface.SetFont(style.font or self.font)
+
+						if style.len then
+							surface.DrawText(content:sub(ptr, style.len and (ptr + style.len - 1)))
+							ptr = ptr + style.len
+						else
+							surface.DrawText(content)
+						end
+					end
 				end
 			end
 
+			-- Draw caret blinker
 			surface.SetDrawColor(255, 200, 255, math.sin(SysTime() * 6 + 1) * 127.5)
 			surface.DrawRect(self.padding_left + (self.caret.endcol - 1) * self.font_width, self.padding_top + (self.caret.endrow - self.top_row) * self.font_height, self.caret_width, self.font_height)
 
-			surface.SetDrawColor(82, 127, 199, 150)
-			if self.caret.startrow == self.caret.endrow then
-				-- Simple case, caret only goes horizontally?
-				local leftmost, rightmost = math.min(self.caret.startcol, self.caret.endcol),
-					math.max(self.caret.startcol, self.caret.endcol)
+			if self:HasSelection() then -- Draw caret selection.
+				surface.SetDrawColor(82, 127, 199, 150)
+				if self.caret.startrow == self.caret.endrow then
+					-- Simple case, caret only goes horizontally?
+					local leftmost, rightmost = math.min(self.caret.startcol, self.caret.endcol),
+						math.max(self.caret.startcol, self.caret.endcol)
 
-				surface.DrawRect(self.padding_left + (leftmost - 1) * self.font_width, self.padding_top + (self.caret.endrow - self.top_row) * self.font_height, self.font_width * (rightmost - leftmost), self.font_height)
-			else -- Okay, spans multiple rows.
-				local toprow, topcol = self:GetCaretTop()
-				local bottomrow, bottomcol = self:GetCaretBottom()
+					surface.DrawRect(self.padding_left + (leftmost - 1) * self.font_width, self.padding_top + (self.caret.endrow - self.top_row) * self.font_height, self.font_width * (rightmost - leftmost), self.font_height)
+				else -- Okay, spans multiple rows.
+					local toprow, topcol = self:GetCaretTop()
+					local bottomrow, bottomcol = self:GetCaretBottom()
 
-				-- Draw top line
-				surface.DrawRect(self.padding_left + self.font_width * (topcol - 1), self.padding_top + (toprow - self.top_row) * self.font_height, self.font_width * math.max(1, #self.rows[toprow] - topcol), self.font_height)
-				-- Draw bottom line
-				surface.DrawRect(self.padding_left, self.padding_top + (bottomrow - self.top_row) * self.font_height, (bottomcol - 1) * self.font_width, self.font_height)
+					-- Draw top line
+					surface.DrawRect(self.padding_left + self.font_width * (topcol - 1), self.padding_top + (toprow - self.top_row) * self.font_height, self.font_width * math.max(1, #self.rows[toprow] - topcol + 1), self.font_height)
+					-- Draw bottom line
+					surface.DrawRect(self.padding_left, self.padding_top + (bottomrow - self.top_row) * self.font_height, (bottomcol - 1) * self.font_width, self.font_height)
 
-				-- Draw rest of lines in between (selecting whole lines.)
-				-- for i = 0, self.max_visible_rows - 1 do
-					-- local row = i + self.top_row
-				for i = toprow + 1, bottomrow - 1 do
-					local absi = i - self.top_row -- Get i in terms of 0 - max_visible_rows to draw properly
-					local rowcontent = self.rows[i]
-					if rowcontent then
-						surface.DrawRect(self.padding_left, self.padding_top + absi * self.font_height, self.font_width * #rowcontent, self.font_height)
+					-- Draw rest of lines in between (selecting whole lines.)
+					for i = toprow + 1, bottomrow - 1 do
+						local absi = i - self.top_row -- Get i in terms of 0 - max_visible_rows to draw properly
+						local rowcontent = self.rows[i]
+						if rowcontent then
+							surface.DrawRect(self.padding_left, self.padding_top + absi * self.font_height, self.font_width * #rowcontent, self.font_height)
+						end
 					end
 				end
 			end
@@ -353,16 +365,10 @@ function Editor:Init(ide, panel)
 		scroll:SetWidth(panel:GetWide() * 0.015)
 		scroll:Dock(RIGHT)
 
-		local ratio = 0
 		local function cursorMoved(_, x, y)
-			ratio = y / panel:GetTall()
-			self.top_row = math.max(1, math.ceil(#self.rows * ratio))
+			scroll_ratio = y / panel:GetTall()
+			self.top_row = math.max(1, math.ceil(#self.rows * scroll_ratio))
 			self:UpdateGutter()
-			-- self:SetScroll(y / panel:GetTall())
-		end
-
-		function scroll.OnFocusChanged(_, gained)
-			print(gained)
 		end
 
 		function scroll.OnCursorExited(_)
@@ -373,6 +379,11 @@ function Editor:Init(ide, panel)
 			if keycode == MOUSE_FIRST then
 				scroll.OnCursorMoved = cursorMoved
 			end
+		end
+
+		function scroll.OnMouseWheeled(_, delta)
+			self.top_row = math.Clamp(self.top_row - delta, 1, #self.rows)
+			scroll_ratio = self.top_row / #self.rows
 		end
 
 		function scroll.OnMouseReleased(_, keycode)
@@ -386,7 +397,7 @@ function Editor:Init(ide, panel)
 			surface.DrawRect(0, 0, width, height)
 
 			surface.SetDrawColor(150, 150, 150, 255)
-			surface.DrawRect(0, ratio * height, width, 50)
+			surface.DrawRect(0, scroll_ratio * height, width, 50)
 		end
 	end
 
@@ -441,7 +452,7 @@ end
 
 ---@param percent number
 function Editor:SetScroll(percent)
-
+	self.top_row = #self.rows * percent
 end
 
 --- Returns the bottom right part of the caret selection.  
@@ -515,13 +526,11 @@ function Editor:UpdateGutter()
 		surface.SetDrawColor(40, 40, 40, 255)
 		surface.DrawRect(0, 0, width, height)
 
-		surface.SetFont(self.font)
+		surface.SetFont(font)
 		surface.SetTextColor(200, 200, 200, 255)
 
-		-- local bottom_row = top_row + max_visible_rows - 1
 		for i = 0, max_visible_rows - 1 do
 			local row = i + top_row
-		-- for i = top_row, bottom_row do
 			-- Offset self.font_height down, Plus row offset. Drawing down -> up.
 			local linestr = tostring(row)
 
