@@ -27,7 +27,7 @@ local Component = include("../component.lua")
 ---@field gutter_len integer
 ---@field gutter_padding_right number
 ---
----@field code DPanel
+---@field callbacks table<string, function[]>
 local Editor = Component.new("Editor")
 
 local default_styling = { { len = nil } }
@@ -42,6 +42,7 @@ function Editor:Init(ide, panel)
 		self.row_styles = {}
 		self.row_folds =  {}
 		self.top_row = 1
+		self.callbacks = {}
 
 		self.fonts = {}
 		self.caret = { startcol = 1, endcol = 1, startrow = 1, endrow = 1 }
@@ -100,7 +101,6 @@ function Editor:Init(ide, panel)
 
 	do -- actual editor part
 		local code_panel = vgui.Create("DTextEntry", panel)
-		code_panel:SetKeyboardInputEnabled(true)
 		code_panel:SetEnterAllowed(true)
 		code_panel:SetTabbingDisabled(true)
 		code_panel:Dock(FILL)
@@ -109,6 +109,7 @@ function Editor:Init(ide, panel)
 
 		function code_panel.AllowInput(_, char)
 			if char == "`" then return end
+			if input.IsControlDown() then return end
 
 			-- Delete any selection first.
 			self:DeleteSelection()
@@ -129,10 +130,12 @@ function Editor:Init(ide, panel)
 			if input.IsControlDown() then
 				if keycode == KEY_A then -- Ctrl + A, select all
 					self:SetCaret(1, 1, #self.rows[#self.rows], #self.rows)
-					return
 				elseif keycode == KEY_C then -- Ctrl + C, copy
 					SetClipboardText(self:GetSelection() or "")
-					return
+				elseif keycode == KEY_SPACE then
+					
+				else
+					self:TriggerCallback("ctrl", keycode)
 				end
 			end
 
@@ -179,7 +182,7 @@ function Editor:Init(ide, panel)
 				local top_row, top_col = self:GetCaretTopLeft()
 				if input.IsShiftDown() then
 					if top_row > 1 then -- Not highest row, you can go up.
-						self.caret.endcol = math.min(top_col, #self.rows[top_row - 1])
+						self.caret.endcol = math.min(top_col, #self.rows[top_row - 1] + 1)
 						self.caret.endrow = self.caret.endrow - 1
 					else -- Just move to column 1, no more rows above.
 						self.caret.endcol = 1
@@ -187,7 +190,7 @@ function Editor:Init(ide, panel)
 					end
 				else
 					if top_row > 1 then -- Not highest row, you can go up.
-						self:SetCaret(math.min(top_col, #self.rows[top_row - 1]), top_row - 1)
+						self:SetCaret(math.min(top_col, #self.rows[top_row - 1] + 1), top_row - 1)
 					else -- Just move to column 1, no more rows above.
 						self:SetCaret(1, 1)
 					end
@@ -195,16 +198,16 @@ function Editor:Init(ide, panel)
 			elseif keycode == KEY_DOWN then
 				local bottom_row, bottom_col = self:GetCaretBottom()
 				if input.IsShiftDown() then
-					if bottom_row < self.max_visible_rows then
+					if bottom_row < #self.rows then
 						if self.rows[bottom_row + 1] then
-							self.caret.endcol = math.min(bottom_col, #self.rows[bottom_row + 1])
+							self.caret.endcol = math.min(bottom_col, #self.rows[bottom_row + 1] + 1)
 							self.caret.endrow = self.caret.endrow + 1
 						else
 							self.caret.endcol = #self.rows[bottom_row] + 1
 						end
 					end
 				else
-					if bottom_row < self.max_visible_rows then
+					if bottom_row < #self.rows then
 						if self.rows[bottom_row + 1] then
 							self:SetCaret(math.min(bottom_col, #self.rows[bottom_row + 1] + 1), bottom_row + 1)
 						else
@@ -219,8 +222,13 @@ function Editor:Init(ide, panel)
 				local rowcontent = self.rows[row]
 
 				if col > 1 then
-					self.rows[row] = rowcontent:sub(1, col - 2) .. rowcontent:sub(col)
-					self:SetCaret(col - 1, row)
+					if col > 3 and rowcontent:sub(col - 4, col) == "    " then -- Special case: Delete four consecutive spaces with one backspace.
+						self.rows[row] = rowcontent:sub(1, col - 5) .. rowcontent:sub(col)
+						self:SetCaret(col - 4, row)
+					else
+						self.rows[row] = rowcontent:sub(1, col - 2) .. rowcontent:sub(col)
+						self:SetCaret(col - 1, row)
+					end
 				elseif row > 1 then -- deleted the line, move up
 					local rest = table.remove(self.rows, row)
 					self:SetCaret(#self.rows[row - 1] + 1, row - 1) -- Set caret to end of top line
@@ -265,32 +273,41 @@ function Editor:Init(ide, panel)
 				abs_row = abs_row + (ed - start - 1)
 			end]]
 
-			local row_content = self.rows[row]
-			if row_content then
-				col = math.min(#row_content + 1, col)
+			local content = self.rows[row]
+			if content then
+				col = math.min(#content + 1, col)
 				return col, row
 			else -- Clicked row is empty.
 				for r = row, self.top_row, -1 do -- Go up until find a line with something on it.
 					local content = self.rows[r]
 					if content then
-						return math.min(#content + 1, col), r, abs_row
+						return math.min(#content + 1, col), r
 					end
 				end
 
-				return 1, 1 -- Completely empty file I guess
+				return 1, 1 -- Empty editor
 			end
 		end
 
 		local function cursorMoved(_, x, y)
 			local col, row = calculatePos(x, y)
 			self.caret.endcol, self.caret.endrow = col, row
+			self:TriggerCallback("caret")
 		end
 
+		local lastpress = CurTime()
 		function code_panel.OnMousePressed(_, keycode)
 			if keycode == MOUSE_FIRST then
+				local now = CurTime()
+				if now - lastpress < 0.4 then -- double click
+				end
+
+				-- single click
 				local x, y = code_panel:CursorPos()
 				self:SetCaret(calculatePos(x, y))
 				code_panel.OnCursorMoved = cursorMoved
+
+				lastpress = now
 			end
 		end
 
@@ -445,7 +462,6 @@ function Editor:SetFont(fontname, size)
 		self.fonts[mangle] = true
 	end
 
-	surface.SetFont(mangle)
 	self.font = mangle
 
 	self.font_width, self.font_height = surface.GetTextSize(" ")
@@ -459,7 +475,11 @@ end
 
 ---@param txt string
 function Editor:SetText(txt)
-	self.rows = txt:Split("\n")
+	self.rows = txt:Replace("\r", ""):Split("\n")
+end
+
+function Editor:GetText()
+	return table.concat(self.rows, "\n")
 end
 
 ---@param col integer
@@ -475,6 +495,7 @@ function Editor:SetCaret(col, row, endcol, endrow)
 	if endrow then endrow = math.max(1, endrow) end
 
 	self.caret = { startcol = col, endcol = endcol or col, startrow = row, endrow = endrow or row }
+	self:TriggerCallback("caret")
 end
 
 ---@param percent number
@@ -558,7 +579,7 @@ function Editor:GetSelection()
 	nbuf = nbuf + 1
 	buf[nbuf] = self.rows[bottomrow]:sub(1, bottomcol)
 
-	return table.concat(buf, "", 1, nbuf)
+	return table.concat(buf, "\n", 1, nbuf)
 end
 
 function Editor:DeleteSelection()
@@ -569,14 +590,29 @@ function Editor:DeleteSelection()
 
 	self.rows[toprow] = self.rows[toprow]:sub(1, topcol - 1) .. self.rows[bottomrow]:sub(bottomcol)
 
-	if toprow ~= bottomrow then -- Delete every row besides first row. Pretty bad O(n) operation
-		for _ = toprow + 1, bottomrow do
-			table.remove(self.rows, toprow + 1)
-		end
+	for _ = toprow + 1, bottomrow do -- Delete every row besides first row. Pretty bad O(n) operation
+		table.remove(self.rows, toprow + 1)
 	end
 
 	self:SetCaret(topcol, toprow)
 	return true
+end
+
+---@param name string
+---@param fn function
+function Editor:OnCallback(name, fn)
+	self.callbacks[name] = self.callbacks[name] or {}
+	self.callbacks[name][#self.callbacks[name] + 1] = fn
+end
+
+---@param name string
+function Editor:TriggerCallback(name, a, b, c)
+	local callbacks = self.callbacks[name]
+	if callbacks then
+		for i, cb in ipairs(callbacks) do
+			cb(a, b, c)
+		end
+	end
 end
 
 local color_number = Color(129, 204, 122)

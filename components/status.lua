@@ -2,14 +2,8 @@
 local Component = include("../component.lua")
 
 ---@class Status: Component
----@field position: DButton
+---@field position DLabel
 local Status = Component.new("Status")
-
----@param button DButton
-local function ButtonStyle(button, width, height)
-	surface.SetDrawColor(60, 60, 60, 255)
-	surface.DrawRect(0, 0, width, height)
-end
 
 ---@param ide IDE
 ---@param panel Panel
@@ -18,48 +12,47 @@ function Status:Init(ide, panel)
 	panel:Dock(BOTTOM)
 
 	do
-		local cornerstat = vgui.Create("DButton", panel)
-		cornerstat:SetWidth(ide:ScaleWidth(0.05))
-		cornerstat:Dock(LEFT)
-
-		cornerstat.Paint = ButtonStyle
-	end
-
-	do
-		local language = vgui.Create("DButton", panel)
-		language:SetWidth(ide:ScaleWidth(0.1))
-		language:SetText("Text")
+		local language = vgui.Create("DLabel", panel)
+		language:SetWidth(ide:ScaleWidth(0.05))
+		language:SetText("Lua")
 		language:Dock(RIGHT)
 		language:DockMargin(ide:ScaleWidth(0.1), 0, 0, 0)
 
-		language.Paint = ButtonStyle
+		language:SetPaintBorderEnabled(false)
+		language:SetTextColor(color_white)
 	end
 
 	do
-		local position = vgui.Create("DButton", panel)
-		position:SetWidth(ide:ScaleWidth(0.15))
-		position:SetText("Ln 29, Col 23")
+		local position = vgui.Create("DLabel", panel)
+		position:SetWidth(ide:ScaleWidth(0.1))
+		position:SetText("Ln 1, Col 1")
 		position:Dock(RIGHT)
 
-		position.Paint = ButtonStyle
+		position:SetTextColor(color_white)
 
 		self.position = position
 	end
-end
 
-function Status:OnTyped()
-	local editor = self.ide.editor --[[@as Editor]]
-	self.position:SetText(string.format("Ln %u, Col %u", editor.caret.startrow, editor.caret.startcol))
-end
+	function panel.Paint(_, width, height)
+		-- Background
+		surface.SetDrawColor(35, 35, 35, 255)
+		surface.DrawRect(0, 0, width, height)
 
-function Status:Paint(width, height)
-	-- Background
-	surface.SetDrawColor(35, 35, 35, 255)
-	surface.DrawRect(0, 0, width, height)
+		-- Outline
+		surface.SetDrawColor(60, 60, 60, 255)
+		surface.DrawOutlinedRect(0, 0, width, height, 1)
+	end
 
-	-- Outline
-	surface.SetDrawColor(60, 60, 60, 255)
-	surface.DrawOutlinedRect(0, 0, width, height, 1)
+	---@param editor Editor
+	ide:WaitForComponent("editor", function(editor)
+		editor:OnCallback("caret", function()
+			if editor:HasSelection() then
+				self.position:SetText(string.format("Ln %u, Col %u (%u selected)", editor.caret.endrow, editor.caret.endcol, #editor:GetSelection()))
+			else
+				self.position:SetText(string.format("Ln %u, Col %u", editor.caret.endrow, editor.caret.endcol))
+			end
+		end)
+	end)
 end
 
 return Status

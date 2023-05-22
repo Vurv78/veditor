@@ -9,20 +9,16 @@ local Toolbox = Component.new("Toolbox")
 function Toolbox:Init(ide, panel)
 	panel:SetSize( ide:ScaleWidth(1), ide:ScaleHeight(0.08) )
 	panel:Dock(TOP)
-end
 
----@param width integer
----@param height integer
-function Toolbox:Paint(width, height)
-	-- Background
-	surface.SetDrawColor(35, 35, 35, 255)
-	surface.DrawRect(0, 0, width, height)
+	function panel.Paint(_, width, height)
+		-- Background
+		surface.SetDrawColor(35, 35, 35, 255)
+		surface.DrawRect(0, 0, width, height)
 
-	-- Outline
-	surface.SetDrawColor(60, 60, 60, 255)
-	surface.DrawOutlinedRect(0, 0, width, height, 1)
-
-	-- draw.SimpleText("Toolbox", "DermaLarge", width / 2, height / 2, nil, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+		-- Outline
+		surface.SetDrawColor(60, 60, 60, 255)
+		surface.DrawOutlinedRect(0, 0, width, height, 1)
+	end
 end
 
 return Toolbox

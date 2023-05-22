@@ -1,6 +1,7 @@
 ---@class IDE
 ---@field frame Panel
 ---@field components Component[]
+---@field callbacks table<string, fun(component: Component)[]>
 local IDE = {}
 IDE.__index = IDE
 
@@ -21,38 +22,51 @@ function IDE.new(width, height)
 		frame = frame,
 		width = width,
 		height = height,
-		components = {}
+
+		components = {},
+		callbacks = {}
 	}, IDE)
 
-	ide:Init()
+	ide:RegisterComponent("toolbox", include("components/toolbox.lua"))
+	ide:RegisterComponent("status", include("components/status.lua"))
+	ide:RegisterComponent("editor", include("components/editor.lua"))
+	ide:RegisterComponent("tree", include("components/files.lua"))
 
 	return ide
 end
 
-function IDE:Init()
-	self:RegisterComponent( include("components/toolbox.lua") )
-	self:RegisterComponent( include("components/status.lua") )
-	self:RegisterComponent( include("components/editor.lua") )
-	self:RegisterComponent( include("components/files.lua") )
-end
-
+---@param name string
 ---@param component Component
----@return Component
-function IDE:RegisterComponent(component)
+function IDE:RegisterComponent(name, component)
+	assert(type(name) == "string", "Name must be a string")
 	assert(component, "Missing component")
+	assert(not self.components[name], "Cannot override component: " .. name)
 
-	local panel = vgui.Create("DPanel", self.frame, tostring(component))
-
-	component.inner = panel
-	component.ide = self
-
+	local panel = vgui.Create("DPanel", self.frame, string.format("ide:%p", component))
+	component.inner, component.ide = panel, self
 	component:Init(self, panel)
-
-	panel.Paint = component.Paint and function(_, w, h) component:Paint(w, h) end
 
 	table.insert(self.components, component)
 
+	if self.callbacks[name] then
+		for i, cb in ipairs(self.callbacks[name]) do
+			cb(component)
+		end
+	end
+
 	return component
+end
+
+---@param name string
+---@param callback fun(component: Component)
+function IDE:WaitForComponent(name, callback)
+	if self.components[name] then callback(self.components[name]) end
+
+	if self.callbacks[name] then
+		self.callbacks[name][#self.callbacks[name] + 1] = callback
+	else
+		self.callbacks[name] = { callback }
+	end
 end
 
 ---@param ratio number
