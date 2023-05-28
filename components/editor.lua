@@ -53,7 +53,6 @@ function Editor:Init(ide, panel)
 		panel:Dock(RIGHT)
 
 		self.width, self.height = panel:GetSize()
-
 		self:SetFont("Consolas", 25)
 	end
 
@@ -63,8 +62,6 @@ function Editor:Init(ide, panel)
 		gutter:Dock(LEFT)
 
 		function gutter.Paint(_, width, height)
-			self:Highlight()
-
 			surface.SetDrawColor(40, 40, 40, 255)
 			surface.DrawRect(0, 0, width, height)
 
@@ -101,15 +98,13 @@ function Editor:Init(ide, panel)
 
 	do -- actual editor part
 		local code_panel = vgui.Create("DTextEntry", panel)
-		code_panel:SetEnterAllowed(true)
+		code_panel:SetEnterAllowed(false)
 		code_panel:SetTabbingDisabled(true)
 		code_panel:Dock(FILL)
-
 		code_panel:RequestFocus()
 
 		function code_panel.AllowInput(_, char)
 			if char == "`" then return end
-			if input.IsControlDown() then return end
 
 			-- Delete any selection first.
 			self:DeleteSelection()
@@ -124,6 +119,7 @@ function Editor:Init(ide, panel)
 			end
 
 			self:SetCaret(col + 1, row)
+			self:TriggerCallback("edit")
 		end
 
 		function code_panel.OnKeyCode(_, keycode)
@@ -132,8 +128,6 @@ function Editor:Init(ide, panel)
 					self:SetCaret(1, 1, #self.rows[#self.rows], #self.rows)
 				elseif keycode == KEY_C then -- Ctrl + C, copy
 					SetClipboardText(self:GetSelection() or "")
-				elseif keycode == KEY_SPACE then
-					
 				else
 					self:TriggerCallback("ctrl", keycode)
 				end
@@ -215,14 +209,12 @@ function Editor:Init(ide, panel)
 						end
 					end
 				end
-			elseif keycode == KEY_BACKSPACE then
-				if self:DeleteSelection() then return end
-
+			elseif keycode == KEY_BACKSPACE and not self:DeleteSelection() then -- If backspace, and not selecting a block of code, then handle single row / special cases here.
 				local col, row = self.caret.endcol, self.caret.endrow
 				local rowcontent = self.rows[row]
 
 				if col > 1 then
-					if col > 3 and rowcontent:sub(col - 4, col) == "    " then -- Special case: Delete four consecutive spaces with one backspace.
+					if col > 3 and rowcontent:sub(col - 4, col - 1) == "    " then -- Special case: Delete four consecutive spaces with one backspace.
 						self.rows[row] = rowcontent:sub(1, col - 5) .. rowcontent:sub(col)
 						self:SetCaret(col - 4, row)
 					else
@@ -254,6 +246,8 @@ function Editor:Init(ide, panel)
 				end
 				self:SetCaret(col + 4, row)
 			end
+
+			self:TriggerCallback("edit")
 
 			return true
 		end
@@ -321,8 +315,11 @@ function Editor:Init(ide, panel)
 		end
 
 		function code_panel.OnMouseWheeled(_, delta)
-			self.top_row = math.Clamp(self.top_row - delta, 1, #self.rows)
-			scroll_ratio = self.top_row / #self.rows
+			local diff = self.top_row - delta
+			if diff >= 1 and diff <= #self.rows then
+				self.top_row = diff
+				scroll_ratio = (self.top_row - 1) / #self.rows
+			end
 		end
 
 		function code_panel.Paint(_, width, height)
@@ -387,7 +384,7 @@ function Editor:Init(ide, panel)
 					local bottomrow, bottomcol = self:GetCaretBottom()
 
 					-- Draw top line
-					surface.DrawRect(self.padding_left + self.font_width * (topcol - 1), self.padding_top + (toprow - self.top_row) * self.font_height, self.font_width * math.max(1, #self.rows[toprow] - topcol + 1), self.font_height)
+					surface.DrawRect(self.padding_left + self.font_width * (topcol - 1), self.padding_top + (toprow - self.top_row) * self.font_height, self.font_width * (#self.rows[toprow] - topcol + 1), self.font_height)
 					-- Draw bottom line
 					surface.DrawRect(self.padding_left, self.padding_top + (bottomrow - self.top_row) * self.font_height, (bottomcol - 1) * self.font_width, self.font_height)
 
@@ -445,6 +442,11 @@ function Editor:Init(ide, panel)
 	end
 
 	self:SetText(assert(file.Read("veditor/example.txt", "LUA"), "Missing veditor/example.txt"))
+
+	self:Highlight()
+	self:OnCallback("edit", function()
+		self:Highlight()
+	end)
 end
 
 ---@param fontname string
@@ -464,6 +466,7 @@ function Editor:SetFont(fontname, size)
 
 	self.font = mangle
 
+	surface.SetFont(mangle) -- for GetTextSize to work properly..
 	self.font_width, self.font_height = surface.GetTextSize(" ")
 	self.max_visible_rows = math.floor(self.height / self.font_height - 1)
 
@@ -570,7 +573,7 @@ function Editor:GetSelection()
 	local buf, nbuf = { self.rows[toprow]:sub(topcol) }, 1
 
 	if toprow ~= bottomrow then  -- Copy every row in between
-		for i = toprow + 1, bottomrow do
+		for i = toprow + 1, bottomrow - 1 do
 			nbuf = nbuf + 1
 			buf[nbuf] = self.rows[i]
 		end
@@ -598,19 +601,23 @@ function Editor:DeleteSelection()
 	return true
 end
 
----@param name string
----@param fn function
+---@overload fun(self, name: "edit", fn: fun())
+---@overload fun(self, name: "ctrl", fn: fun(a: integer))
+---@overload fun(self, name: "caret", fn: fun())
 function Editor:OnCallback(name, fn)
 	self.callbacks[name] = self.callbacks[name] or {}
 	self.callbacks[name][#self.callbacks[name] + 1] = fn
 end
 
----@param name string
-function Editor:TriggerCallback(name, a, b, c)
+
+---@overload fun(self, name: "edit")
+---@overload fun(self, name: "ctrl", a: integer)
+---@overload fun(self, name: "caret")
+function Editor:TriggerCallback(name, a)
 	local callbacks = self.callbacks[name]
 	if callbacks then
-		for i, cb in ipairs(callbacks) do
-			cb(a, b, c)
+		for _, cb in ipairs(callbacks) do
+			cb(a)
 		end
 	end
 end
