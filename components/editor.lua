@@ -125,7 +125,7 @@ function Editor:Init(ide, panel)
 		function code_panel.OnKeyCode(_, keycode)
 			if input.IsControlDown() then
 				if keycode == KEY_A then -- Ctrl + A, select all
-					self:SetCaret(1, 1, #self.rows[#self.rows], #self.rows)
+					self:SetCaret(1, 1, #self.rows[#self.rows] + 1, #self.rows)
 				elseif keycode == KEY_C then -- Ctrl + C, copy
 					SetClipboardText(self:GetSelection() or "")
 				else
