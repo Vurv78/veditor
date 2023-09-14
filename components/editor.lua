@@ -5,7 +5,6 @@ local Component = include("../component.lua")
 ---
 ---@field rows string[]
 ---@field row_styles { fg: Color?, bg: Color?, font: string?, len: integer? }[][]
----@field row_folds table<integer, integer> start -> end
 ---@field top_row integer
 ---@field max_visible_rows integer
 ---
@@ -40,7 +39,6 @@ function Editor:Init(ide, panel)
 	do
 		self.rows = {}
 		self.row_styles = {}
-		self.row_folds =  {}
 		self.top_row = 1
 		self.callbacks = {}
 
@@ -83,12 +81,7 @@ function Editor:Init(ide, panel)
 				surface.SetTextPos(x, y)
 				surface.DrawText(linestr)
 
-				if self.row_folds[row] then -- Exclusive fold, 3 - 6 hides 4, 5
-					row = self.row_folds[row]
-				else
-					row = row + 1
-				end
-
+				row = row + 1
 				i = i + 1
 			end
 		end
@@ -261,12 +254,6 @@ function Editor:Init(ide, panel)
 
 			local col, row = math.Round(x / self.font_width) + 1, math.floor(y / self.font_height) + self.top_row
 
-			--[[local abs_row = row
-			for start, ed in pairs(self.row_folds) do
-				if start > row then break end
-				abs_row = abs_row + (ed - start - 1)
-			end]]
-
 			local content = self.rows[row]
 			if content then
 				col = math.min(#content + 1, col)
@@ -336,10 +323,6 @@ function Editor:Init(ide, panel)
 					break
 				end
 
-				if self.row_folds[row] then -- Inclusive fold, 3 - 6 hides 3, 4, 5, 6.
-					row = self.row_folds[row] + 1
-				end
-
 				local y = self.padding_top + i * self.font_height
 				local x = self.padding_left
 
@@ -358,12 +341,7 @@ function Editor:Init(ide, panel)
 					end
 				end
 
-				if self.row_folds[row] then -- Exclusive fold, 3 - 6 hides 4, 5
-					row = self.row_folds[row]
-				else
-					row = row + 1
-				end
-
+				row = row + 1
 				i = i + 1
 			end
 
@@ -636,35 +614,35 @@ local keywords = {
 
 function Editor:Highlight()
 	for i, row in ipairs(self.rows) do
-		local styles = {}
+		local styles, nstyles = {}, 0
 		local ptr, len = 1, #row
 		while ptr <= len do
+			nstyles = nstyles + 1
+
 			local _, ed, num = row:find("^(%d+%.%d+)", ptr)
 			if num then
-				styles[#styles + 1] = { fg = color_number, len = ed - ptr + 1 }
+				styles[nstyles] = { fg = color_number, len = ed - ptr + 1 }
 				ptr = ed + 1
 				goto cont
 			end
 
 			local _, ed, num = row:find("^(%d+)", ptr)
 			if num then
-				styles[#styles + 1] = { fg = color_number, len = ed - ptr + 1 }
+				styles[nstyles] = { fg = color_number, len = ed - ptr + 1 }
 				ptr = ed + 1
 				goto cont
 			end
 
 			local _, ed, str = row:find("^('[^']*')", ptr)
 			if str then
-				styles[#styles + 1] = { fg = color_string, len = ed - ptr + 1 }
-
+				styles[nstyles] = { fg = color_string, len = ed - ptr + 1 }
 				ptr = ed + 1
 				goto cont
 			end
 
 			local _, ed, str = row:find("^(\"[^\"]*\")", ptr)
 			if str then
-				styles[#styles + 1] = { fg = color_string, len = ed - ptr + 1 }
-
+				styles[nstyles] = { fg = color_string, len = ed - ptr + 1 }
 				ptr = ed + 1
 				goto cont
 			end
@@ -672,9 +650,9 @@ function Editor:Highlight()
 			local _, ed, ident = row:find("^([%w_]+)", ptr)
 			if ident then
 				if keywords[ident] then
-					styles[#styles + 1] = { fg = color_keyword, len = ed - ptr + 1 }
+					styles[nstyles] = { fg = color_keyword, len = ed - ptr + 1 }
 				else
-					styles[#styles + 1] = { fg = color_ident, len = ed - ptr + 1 }
+					styles[nstyles] = { fg = color_ident, len = ed - ptr + 1 }
 				end
 
 				ptr = ed + 1
@@ -683,13 +661,12 @@ function Editor:Highlight()
 
 			local _, ed, ws = row:find("^(%s+)", ptr)
 			if ws then
-				styles[#styles + 1] = { fg = color_whitespace, len = ed - ptr + 1 }
-
+				styles[nstyles] = { fg = color_whitespace, len = ed - ptr + 1 }
 				ptr = ed + 1
 				goto cont
 			end
 
-			styles[#styles + 1] = { fg = color_white, len = 1 }
+			styles[nstyles] = { fg = color_white, len = 1 }
 			ptr = ptr + 1
 
 			::cont::
