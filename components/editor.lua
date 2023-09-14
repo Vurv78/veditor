@@ -600,16 +600,25 @@ function Editor:TriggerCallback(name, a)
 	end
 end
 
-local color_number = Color(129, 204, 122)
+local color_number = Color(181, 206, 168)
 local color_ident = Color(156, 220, 254)
 local color_keyword = Color(197, 134, 192)
+local color_keyword_value = Color(86, 156, 214)
+local color_function = Color(220, 220, 170)
 local color_string = Color(206, 145, 120)
+local color_comment = Color(106, 153, 85)
 local color_whitespace = Color(255, 255, 255, 5)
+local color_other = Color(212, 212, 212)
 
 local keywords = {
-	["function"] = true, ["local"] = true, ["end"] = true, ["true"] = true, ["false"] = true,
-	["while"] = true, ["for"] = true, ["in"] = true, ["repeat"] = true, ["if"] = true, ["else"] = true,
+	["function"] = true, ["local"] = true, ["end"] = true, ["while"] = true,
+	["for"] = true, ["in"] = true, ["repeat"] = true, ["if"] = true, ["else"] = true,
 	["elseif"] = true, ["until"] = true, ["goto"] = true, ["do"] = true
+}
+
+local value_keywords = {
+	["true"] = true, ["false"] = true, ["nil"] = true, ["_G"] = true,
+	["self"] = true
 }
 
 function Editor:Highlight()
@@ -651,10 +660,21 @@ function Editor:Highlight()
 			if ident then
 				if keywords[ident] then
 					styles[nstyles] = { fg = color_keyword, len = ed - ptr + 1 }
+				elseif value_keywords[ident] then
+					styles[nstyles] = { fg = color_keyword_value, len = ed - ptr + 1 }
+				elseif row:find("^%s*%(", ed + 1) then
+					styles[nstyles] = { fg = color_function, len = ed - ptr + 1 }
 				else
 					styles[nstyles] = { fg = color_ident, len = ed - ptr + 1 }
 				end
 
+				ptr = ed + 1
+				goto cont
+			end
+
+			local _, ed, comment = row:find("^(%-%-.*)$")
+			if comment then
+				styles[nstyles] = { fg = color_comment, len = ed - ptr + 1 }
 				ptr = ed + 1
 				goto cont
 			end
@@ -666,7 +686,7 @@ function Editor:Highlight()
 				goto cont
 			end
 
-			styles[nstyles] = { fg = color_white, len = 1 }
+			styles[nstyles] = { fg = color_other, len = 1 }
 			ptr = ptr + 1
 
 			::cont::
