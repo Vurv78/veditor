@@ -194,12 +194,10 @@ function Editor:Init(ide, panel)
 						end
 					end
 				else
-					if bottom_row < #self.rows then
-						if self.rows[bottom_row + 1] then
-							self:SetCaret(math.min(bottom_col, #self.rows[bottom_row + 1] + 1), bottom_row + 1)
-						else
-							self:SetCaret(#self.rows[bottom_row] + 1, bottom_row)
-						end
+					if self.rows[bottom_row + 1] then
+						self:SetCaret(math.min(bottom_col, #self.rows[bottom_row + 1] + 1), bottom_row + 1)
+					else
+						self:SetCaret(#self.rows[bottom_row] + 1, bottom_row)
 					end
 				end
 			elseif keycode == KEY_BACKSPACE and not self:DeleteSelection() then -- If backspace, and not selecting a block of code, then handle single row / special cases here.
