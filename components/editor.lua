@@ -130,14 +130,62 @@ function Editor:Init(ide, panel)
 				local bottom_row, bottom_col = self:GetCaretBottomRight()
 				if input.IsShiftDown() then
 					if bottom_col <= #self.rows[bottom_row] then -- There's room to move right.
-						self.caret.endcol = self.caret.endcol + 1
+						if input.IsControlDown() then
+							local r, rlen = self.rows[bottom_row], #self.rows[bottom_row]
+							self.caret.endcol = rlen + 1
+
+							local ty -- Basically, move right scanning characters until one doesn't match the "group". In this case there's only two groups, alphanumeric (1) and everything else (2)
+							for i = bottom_col, rlen do
+								local c = string.byte(r, i)
+
+								local ty2 = ((65 <= c and c >= 90) and 1)
+									or ((97 <= c and c >= 122) and 1)
+									or ((48 <= c and c >= 57) and 1)
+									or 2
+
+								if ty then
+									if ty ~= ty2 then
+										self.caret.endcol = i
+										break
+									end
+								else
+									ty = ty2
+								end
+							end
+						else
+							self.caret.endcol = self.caret.endcol + 1
+						end
 					elseif bottom_row < self.max_visible_rows and self.rows[bottom_row + 1] then -- Leaked onto next (bottom) line
 						self.caret.endcol = 1
 						self.caret.endrow = self.caret.endrow + 1
 					end
 				else
 					if bottom_col <= #self.rows[bottom_row] then -- There's room to move right.
-						self:SetCaret(bottom_col + 1, bottom_row)
+						if input.IsControlDown() then
+							local r, rlen = self.rows[bottom_row], #self.rows[bottom_row]
+							self:SetCaret(rlen + 1, bottom_row)
+
+							local ty
+							for i = bottom_col, rlen do
+								local c = string.byte(r, i)
+
+								local ty2 = ((65 <= c and c >= 90) and 1)
+									or ((97 <= c and c >= 122) and 1)
+									or ((48 <= c and c >= 57) and 1)
+									or 2
+
+								if ty then
+									if ty ~= ty2 then
+										self:SetCaret(i, bottom_row)
+										break
+									end
+								else
+									ty = ty2
+								end
+							end
+						else
+							self:SetCaret(bottom_col + 1, bottom_row)
+						end
 					elseif bottom_row < self.max_visible_rows and self.rows[bottom_row + 1] then -- Leaked onto next (bottom) line
 						self:SetCaret(1, bottom_row + 1)
 					else
@@ -148,7 +196,31 @@ function Editor:Init(ide, panel)
 				local top_row, top_col = self:GetCaretTopLeft()
 				if input.IsShiftDown() then
 					if top_col > 1 then -- There's room to move left.
-						self.caret.endcol = self.caret.endcol - 1
+						if input.IsControlDown() then
+							local r = self.rows[top_row]
+							self.caret.endcol = 1
+
+							local ty
+							for i = top_col - 1, 1, -1 do
+								local c = string.byte(r, i)
+
+								local ty2 = ((65 <= c and c >= 90) and 1)
+									or ((97 <= c and c >= 122) and 1)
+									or ((48 <= c and c >= 57) and 1)
+									or 2
+
+								if ty then
+									if ty ~= ty2 then
+										self.caret.endcol = i + 1
+										break
+									end
+								else
+									ty = ty2
+								end
+							end
+						else
+							self.caret.endcol = self.caret.endcol - 1
+						end
 					elseif top_row > 1 then -- Leaked onto previous (top) line
 						if top_row <= self.top_row then -- Scroll editor upward
 							self.top_row = self.top_row - 1
@@ -158,7 +230,31 @@ function Editor:Init(ide, panel)
 					end
 				else
 					if top_col > 1 then -- There's room to move left.
-						self:SetCaret(top_col - 1, top_row)
+						if input.IsControlDown() then
+							local r = self.rows[top_row]
+							self:SetCaret(1, top_row)
+
+							local ty
+							for i = top_col - 1, 1, -1 do
+								local c = string.byte(r, i)
+
+								local ty2 = ((65 <= c and c >= 90) and 1)
+									or ((97 <= c and c >= 122) and 1)
+									or ((48 <= c and c >= 57) and 1)
+									or 2
+
+								if ty then
+									if ty ~= ty2 then
+										self:SetCaret(i + 1, top_row)
+										break
+									end
+								else
+									ty = ty2
+								end
+							end
+						else
+							self:SetCaret(top_col - 1, top_row)
+						end
 					elseif top_row > 1 then -- Leaked onto previous (top) line
 						self:SetCaret(#self.rows[top_row - 1] + 1, top_row - 1)
 					else
