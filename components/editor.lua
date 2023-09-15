@@ -115,6 +115,54 @@ function Editor:Init(ide, panel)
 			self:TriggerCallback("edit")
 		end
 
+		---@param row string
+		---@param col integer
+		local function getEndGroupLeft(row, col)
+			local ty
+			for i = col - 1, 1, -1 do
+				local c = string.byte(row, i)
+
+				local ty2 = ((65 <= c and c >= 90) and 1)
+					or ((97 <= c and c >= 122) and 1)
+					or ((48 <= c and c >= 57) and 1)
+					or 2
+
+				if ty then
+					if ty ~= ty2 then
+						return i + 1
+					end
+				else
+					ty = ty2
+				end
+			end
+
+			return 1
+		end
+
+		---@param row string
+		---@param col integer
+		local function getEndGroupRight(row, col)
+			local len, ty = #row, nil
+			for i = col, len do
+				local c = string.byte(row, i)
+
+				local ty2 = ((65 <= c and c >= 90) and 1)
+					or ((97 <= c and c >= 122) and 1)
+					or ((48 <= c and c >= 57) and 1)
+					or 2
+
+				if ty then
+					if ty ~= ty2 then
+						return i
+					end
+				else
+					ty = ty2
+				end
+			end
+
+			return len + 1
+		end
+
 		function code_panel.OnKeyCode(_, keycode)
 			if input.IsControlDown() then
 				if keycode == KEY_A then -- Ctrl + A, select all
@@ -132,26 +180,7 @@ function Editor:Init(ide, panel)
 					if bottom_col <= #self.rows[bottom_row] then -- There's room to move right.
 						if input.IsControlDown() then
 							local r, rlen = self.rows[bottom_row], #self.rows[bottom_row]
-							self.caret.endcol = rlen + 1
-
-							local ty -- Basically, move right scanning characters until one doesn't match the "group". In this case there's only two groups, alphanumeric (1) and everything else (2)
-							for i = bottom_col, rlen do
-								local c = string.byte(r, i)
-
-								local ty2 = ((65 <= c and c >= 90) and 1)
-									or ((97 <= c and c >= 122) and 1)
-									or ((48 <= c and c >= 57) and 1)
-									or 2
-
-								if ty then
-									if ty ~= ty2 then
-										self.caret.endcol = i
-										break
-									end
-								else
-									ty = ty2
-								end
-							end
+							self.caret.endcol = getEndGroupRight(r, bottom_col) or rlen + 1
 						else
 							self.caret.endcol = self.caret.endcol + 1
 						end
@@ -162,27 +191,10 @@ function Editor:Init(ide, panel)
 				else
 					if bottom_col <= #self.rows[bottom_row] then -- There's room to move right.
 						if input.IsControlDown() then
-							local r, rlen = self.rows[bottom_row], #self.rows[bottom_row]
-							self:SetCaret(rlen + 1, bottom_row)
+							local r = self.rows[bottom_row]
+							local len = #r
 
-							local ty
-							for i = bottom_col, rlen do
-								local c = string.byte(r, i)
-
-								local ty2 = ((65 <= c and c >= 90) and 1)
-									or ((97 <= c and c >= 122) and 1)
-									or ((48 <= c and c >= 57) and 1)
-									or 2
-
-								if ty then
-									if ty ~= ty2 then
-										self:SetCaret(i, bottom_row)
-										break
-									end
-								else
-									ty = ty2
-								end
-							end
+							self:SetCaret(getEndGroupRight(r, bottom_col) or len + 1, bottom_row)
 						else
 							self:SetCaret(bottom_col + 1, bottom_row)
 						end
@@ -197,27 +209,7 @@ function Editor:Init(ide, panel)
 				if input.IsShiftDown() then
 					if top_col > 1 then -- There's room to move left.
 						if input.IsControlDown() then
-							local r = self.rows[top_row]
-							self.caret.endcol = 1
-
-							local ty
-							for i = top_col - 1, 1, -1 do
-								local c = string.byte(r, i)
-
-								local ty2 = ((65 <= c and c >= 90) and 1)
-									or ((97 <= c and c >= 122) and 1)
-									or ((48 <= c and c >= 57) and 1)
-									or 2
-
-								if ty then
-									if ty ~= ty2 then
-										self.caret.endcol = i + 1
-										break
-									end
-								else
-									ty = ty2
-								end
-							end
+							self.caret.endcol = getEndGroupLeft(self.rows[top_row], top_col)
 						else
 							self.caret.endcol = self.caret.endcol - 1
 						end
@@ -231,27 +223,7 @@ function Editor:Init(ide, panel)
 				else
 					if top_col > 1 then -- There's room to move left.
 						if input.IsControlDown() then
-							local r = self.rows[top_row]
-							self:SetCaret(1, top_row)
-
-							local ty
-							for i = top_col - 1, 1, -1 do
-								local c = string.byte(r, i)
-
-								local ty2 = ((65 <= c and c >= 90) and 1)
-									or ((97 <= c and c >= 122) and 1)
-									or ((48 <= c and c >= 57) and 1)
-									or 2
-
-								if ty then
-									if ty ~= ty2 then
-										self:SetCaret(i + 1, top_row)
-										break
-									end
-								else
-									ty = ty2
-								end
-							end
+							self:SetCaret(getEndGroupLeft(self.rows[top_row], top_col) or 1, top_row)
 						else
 							self:SetCaret(top_col - 1, top_row)
 						end
@@ -300,7 +272,17 @@ function Editor:Init(ide, panel)
 				local col, row = self.caret.endcol, self.caret.endrow
 				local rowcontent = self.rows[row]
 
-				if col > 1 then
+				if col == 1 then
+					if row ~= 1 then
+						local rest = table.remove(self.rows, row)
+						self:SetCaret(#self.rows[row - 1] + 1, row - 1) -- Go to end of line above
+						self.rows[row - 1] = self.rows[row - 1] .. rest -- Append rest of content to top line
+					end
+				elseif input.IsControlDown() then
+					local endcol = getEndGroupLeft(rowcontent, col)
+					self.rows[row] = rowcontent:sub(1, endcol - 1) .. rowcontent:sub(col)
+					self:SetCaret(endcol, row)
+				else
 					if col > 3 and rowcontent:sub(col - 4, col - 1) == "    " then -- Special case: Delete four consecutive spaces with one backspace.
 						self.rows[row] = rowcontent:sub(1, col - 5) .. rowcontent:sub(col)
 						self:SetCaret(col - 4, row)
@@ -308,11 +290,7 @@ function Editor:Init(ide, panel)
 						self.rows[row] = rowcontent:sub(1, col - 2) .. rowcontent:sub(col)
 						self:SetCaret(col - 1, row)
 					end
-				elseif row > 1 then -- deleted the line, move up
-					local rest = table.remove(self.rows, row)
-					self:SetCaret(#self.rows[row - 1] + 1, row - 1) -- Set caret to end of top line
-					self.rows[row - 1] = self.rows[row - 1] .. rest -- Append rest of content to top line
-				end -- Do nothing, at top of editor.
+				end -- Do nothing, top of editor.
 			elseif keycode == KEY_ENTER then
 				self:DeleteSelection()
 
@@ -370,24 +348,34 @@ function Editor:Init(ide, panel)
 			self:TriggerCallback("caret")
 		end
 
-		local lastpress = CurTime()
+		local lastpress, double_clicked = CurTime(), false
 		function code_panel.OnMousePressed(_, keycode)
 			if keycode == MOUSE_FIRST then
-				local now = CurTime()
-				if now - lastpress < 0.4 then -- double click
-				end
-
-				-- single click
 				local x, y = code_panel:CursorPos()
-				self:SetCaret(calculatePos(x, y))
-				code_panel.OnCursorMoved = cursorMoved
+				local col, row = calculatePos(x, y)
+
+				local now = CurTime()
+				double_clicked = now - lastpress < 0.2
+
+				if double_clicked then
+					local content = self.rows[row]
+
+					local right = getEndGroupRight(content, col) or col
+					local left = getEndGroupLeft(content, col) or col
+
+					code_panel.OnCursorMoved = nil
+					self:SetCaret(left, row, right, row)
+				else
+					self:SetCaret(col, row)
+					code_panel.OnCursorMoved = cursorMoved
+				end
 
 				lastpress = now
 			end
 		end
 
 		function code_panel.OnMouseReleased(_, keycode)
-			if keycode == MOUSE_FIRST then
+			if keycode == MOUSE_FIRST and not double_clicked then
 				local x, y = code_panel:CursorPos()
 				local col, row = calculatePos(x, y)
 				self.caret.endcol, self.caret.endrow = col, row
@@ -424,7 +412,7 @@ function Editor:Init(ide, panel)
 
 				local ptr = 1
 				for _, style in ipairs(self.row_styles[row] or default_styling) do
-					surface.SetTextColor(style.fg or color_white)
+					surface.SetTextColor(style.fg)
 					surface.SetFont(style.font or self.font)
 
 					if style.len then
