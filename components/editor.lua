@@ -55,10 +55,13 @@ function Editor:Init(ide, panel)
 	end
 
 	do -- gutter
-		local gutter = vgui.Create("DPanel", panel)
+		---@class Gutter: Panel
+		local gutter = vgui.Create("Panel", panel)
 		gutter:SetWidth(6 * self.font_width + self.gutter_padding_right)
 		gutter:Dock(LEFT)
 
+		---@param width number
+		---@param height number
 		function gutter.Paint(_, width, height)
 			surface.SetDrawColor(40, 40, 40, 255)
 			surface.DrawRect(0, 0, width, height)
@@ -89,15 +92,20 @@ function Editor:Init(ide, panel)
 
 	local scroll_ratio = 0
 
-	do -- actual editor part
-		local code_panel = vgui.Create("DTextEntry", panel)
-		code_panel:SetEnterAllowed(false)
-		code_panel:SetTabbingDisabled(true)
+	do
+		---@class CodePanel: TextEntry
+		local code_panel = vgui.Create("TextEntry", panel)
+		code_panel:SetPaintBackgroundEnabled(false)
+		code_panel:SetPaintBorderEnabled(false)
+		-- code_panel:SetAllowNonAsciiCharacters(false)
 		code_panel:Dock(FILL)
 		code_panel:RequestFocus()
 
-		function code_panel.AllowInput(_, char)
-			if char == "`" then return end
+		function code_panel.OnTextChanged()
+			local text = code_panel:GetText()
+			code_panel:SetText("")
+
+			print(string.find(text, "\n"))
 
 			-- Delete any selection first.
 			self:DeleteSelection()
@@ -106,13 +114,18 @@ function Editor:Init(ide, panel)
 			local rowcontent = self.rows[row]
 
 			if rowcontent then
-				self.rows[row] = rowcontent:sub(1, col - 1) .. char .. rowcontent:sub(col)
+				self.rows[row] = rowcontent:sub(1, col - 1) .. text .. rowcontent:sub(col)
 			else
-				self.rows[row] = char
+				self.rows[row] = text
 			end
 
-			self:SetCaret(col + 1, row)
+			self:SetCaret(col + #text, row)
 			self:TriggerCallback("edit")
+		end
+
+		---@param char string
+		function code_panel.AllowInput(_, char)
+			return char == "`"
 		end
 
 		---@param row string
@@ -163,14 +176,16 @@ function Editor:Init(ide, panel)
 			return len + 1
 		end
 
-		function code_panel.OnKeyCode(_, keycode)
+		function code_panel.OnKeyCodeTyped(_, keycode)
 			if input.IsControlDown() then
 				if keycode == KEY_A then -- Ctrl + A, select all
 					self:SetCaret(1, 1, #self.rows[#self.rows] + 1, #self.rows)
 				elseif keycode == KEY_C then -- Ctrl + C, copy
-					SetClipboardText(self:GetSelection() or "")
+					surface.PlaySound("ambient/water/drip1.wav")
+					SetClipboardText(string.gsub(self:GetSelection() or "", "\n", "\r\n"))
 				else
 					self:TriggerCallback("ctrl", keycode)
+					return false
 				end
 			end
 
@@ -363,7 +378,6 @@ function Editor:Init(ide, panel)
 					local right = getEndGroupRight(content, col) or col
 					local left = getEndGroupLeft(content, col) or col
 
-					code_panel.OnCursorMoved = nil
 					self:SetCaret(left, row, right, row)
 				else
 					self:SetCaret(col, row)
@@ -458,11 +472,13 @@ function Editor:Init(ide, panel)
 					end
 				end
 			end
+
+			return false
 		end
 	end
 
 	do -- scrollbar
-		local scroll = vgui.Create("DPanel", panel)
+		local scroll = vgui.Create("Panel", panel)
 		scroll:SetWidth(panel:GetWide() * 0.015)
 		scroll:Dock(RIGHT)
 
@@ -630,19 +646,20 @@ function Editor:GetSelection()
 	local toprow, topcol = self:GetCaretTopLeft()
 	local bottomrow, bottomcol = self:GetCaretBottomRight()
 
-	local buf, nbuf = { self.rows[toprow]:sub(topcol) }, 1
-
-	if toprow ~= bottomrow then  -- Copy every row in between
-		for i = toprow + 1, bottomrow - 1 do
+	if toprow == bottomrow then
+		return self.rows[toprow]:sub(topcol, bottomcol - 1)
+	else
+		local buf, nbuf = { self.rows[toprow]:sub(topcol) }, 1
+		for i = toprow + 1, bottomrow - 1 do -- copy every row in between, if any
 			nbuf = nbuf + 1
 			buf[nbuf] = self.rows[i]
 		end
+
+		nbuf = nbuf + 1
+		buf[nbuf] = self.rows[bottomrow]:sub(1, bottomcol)
+
+		return table.concat(buf, "\n", 1, nbuf)
 	end
-
-	nbuf = nbuf + 1
-	buf[nbuf] = self.rows[bottomrow]:sub(1, bottomcol)
-
-	return table.concat(buf, "\n", 1, nbuf)
 end
 
 function Editor:DeleteSelection()
